@@ -92,6 +92,43 @@ Depending on your region:
 
 ## 🧾 Troubleshooting
 
+### Settings readback (1.0.20)
+
+Grid charge and the three current controls now display settings read from
+DeyeCloud, rather than the last requested command value. A shared per-inverter
+coordinator reads on startup, every five minutes, and after a successful command.
+The controls expose `state_source` and `settings_read_at` attributes.
+
+`/config/battery` supplies decoded current limits. Grid-charge enable/current
+are read through `/strategy/dynamicControl/read` and the returned order result.
+Register decoding follows the upstream project's single-phase low-voltage hybrid
+layout, guarded by layout markers `00F4` and `00F8`. Other layouts are left unknown.
+See [Deye's API schemas](https://developer.deyecloud.com/openmcp/docs/deye-open-mcp-tools.html)
+and [upstream decoder](https://github.com/heavenknows1978/hass-deyecloud/blob/main/custom_components/deyecloud/control_payloads.py).
+
+Missing, unsupported or failed readings make the affected controls unavailable;
+they never fall back to the requested setting. This can prevent automations from
+using those controls until a read succeeds. DeyeCloud may return delayed data;
+the read timestamp is the time Home Assistant fetched it, not proof of freshness
+at the inverter. Grid charging enabled is a setting, not proof of charging power.
+
+The update has automated tests with minimal Home Assistant interface doubles;
+it still needs installation testing against your Home Assistant and inverter.
+
+### Request retries
+
+- Control requests that receive HTTP 500 are retried up to two times, after
+  2 seconds and 4 seconds (three attempts total). Each retry is logged.
+- Other HTTP errors and connection timeouts are not retried by this retry loop.
+  The loop only covers submission, not order polling. A server error can
+  still occur after a command has reached the inverter, so a retry may repeat
+  the same explicit setting.
+- Battery parameter updates retain the alternative parameter-spelling fallback;
+  each spelling can make up to three attempts (six submissions total). This
+  existing fallback also runs if order polling fails for the first spelling.
+- Persistent HTTP 500 errors still fail the action after retries. Retries help
+  temporary failures; they do not fix unsupported parameters or API defects.
+
 - Check **Settings → System → Logs** for errors
 - Ensure you restarted HA after copying files
 - Ensure `custom_components/deyecloud/` has correct permissions

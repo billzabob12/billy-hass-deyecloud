@@ -9,9 +9,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import async_get_token, async_update_battery_parameter
 from .button import _async_fetch_inverter_devices, _async_fetch_station_list
+from .settings import async_get_settings_coordinator
 from .const import (
     CONF_APP_ID,
     CONF_APP_SECRET,
@@ -124,6 +126,7 @@ async def async_setup_entry(
 
         for device in inverter_devices:
             sn = device["deviceSn"]
+            coordinator = await async_get_settings_coordinator(hass, entry, sn)
 
             for description in NUMBER_DESCRIPTIONS:
                 entities.append(
@@ -137,6 +140,7 @@ async def async_setup_entry(
                         company_id,
                         sn,
                         description,
+                        coordinator,
                     )
                 )
 
@@ -148,7 +152,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class DeyeBatteryCurrentNumber(NumberEntity):
+class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
     """DeyeCloud battery/grid current limit number."""
 
     def __init__(
@@ -162,7 +166,9 @@ class DeyeBatteryCurrentNumber(NumberEntity):
         company_id,
         device_sn,
         description: DeyeBatteryNumberDescription,
+        coordinator,
     ):
+        super().__init__(coordinator)
         self.hass = hass
         self._username = username
         self._password = password
@@ -183,9 +189,18 @@ class DeyeBatteryCurrentNumber(NumberEntity):
         self._attr_native_step = description.step
         self._attr_mode = "box"
 
-        # Unknown until this integration sends a command.
-        # Later this could be initialised from DeyeCloud /config/battery.
-        self._attr_native_value = None
+    @property
+    def native_value(self):
+        return (self.coordinator.data or {}).get(self._description.key)
+
+    @property
+    def available(self):
+        return super().available and self.native_value is not None
+
+    @property
+    def extra_state_attributes(self):
+        return {"state_source": "DeyeCloud settings readback",
+                "settings_read_at": self.coordinator.read_at}
 
     @property
     def device_info(self):
@@ -234,8 +249,7 @@ class DeyeBatteryCurrentNumber(NumberEntity):
                         response,
                     )
 
-                    self._attr_native_value = value
-                    self.async_write_ha_state()
+                    await self.coordinator.async_refresh()
                     return
 
                 except Exception as exc:

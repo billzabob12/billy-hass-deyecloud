@@ -8,9 +8,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import async_control_grid_charge, async_get_token
 from .button import _async_fetch_inverter_devices, _async_fetch_station_list
+from .settings import async_get_settings_coordinator
 from .const import (
     CONF_APP_ID,
     CONF_APP_SECRET,
@@ -75,6 +77,7 @@ async def async_setup_entry(
 
         for device in inverter_devices:
             sn = device["deviceSn"]
+            coordinator = await async_get_settings_coordinator(hass, entry, sn)
 
             entities.append(
                 DeyeGridChargeSwitch(
@@ -86,6 +89,7 @@ async def async_setup_entry(
                     base_url,
                     company_id,
                     sn,
+                    coordinator,
                 )
             )
 
@@ -97,7 +101,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class DeyeGridChargeSwitch(SwitchEntity):
+class DeyeGridChargeSwitch(CoordinatorEntity, SwitchEntity):
     """DeyeCloud grid charge switch."""
 
     def __init__(
@@ -110,7 +114,9 @@ class DeyeGridChargeSwitch(SwitchEntity):
         base_url,
         company_id,
         device_sn,
+        coordinator,
     ):
+        super().__init__(coordinator)
         self.hass = hass
         self._username = username
         self._password = password
@@ -123,10 +129,8 @@ class DeyeGridChargeSwitch(SwitchEntity):
         self._attr_name = f"Deye Grid Charge {device_sn}"
         self._attr_unique_id = f"{device_sn}_grid_charge"
         self._attr_icon = "mdi:battery-charging"
-        self._attr_assumed_state = True
+        self._attr_assumed_state = False
 
-        # Unknown until this integration sends a command.
-        self._attr_is_on = None
 
     @property
     def device_info(self):
@@ -141,7 +145,16 @@ class DeyeGridChargeSwitch(SwitchEntity):
     @property
     def is_on(self):
         """Return grid charge state."""
-        return self._attr_is_on
+        return (self.coordinator.data or {}).get("grid_charge")
+
+    @property
+    def available(self):
+        return super().available and self.is_on is not None
+
+    @property
+    def extra_state_attributes(self):
+        return {"state_source": "DeyeCloud settings readback",
+                "settings_read_at": self.coordinator.read_at}
 
     async def _async_send(self, enable: bool) -> None:
         """Send grid charge command and wait for DeyeCloud confirmation."""
@@ -174,8 +187,7 @@ class DeyeGridChargeSwitch(SwitchEntity):
                 response,
             )
 
-            self._attr_is_on = enable
-            self.async_write_ha_state()
+            await self.coordinator.async_refresh()
 
         except Exception as exc:
             raise HomeAssistantError(

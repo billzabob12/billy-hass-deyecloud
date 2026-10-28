@@ -11,6 +11,9 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
+_CONTROL_MAX_ATTEMPTS = 3
+_CONTROL_RETRY_DELAY_SECONDS = 2
+
 
 class DeyeCloudApiError(Exception):
     """Base error for DeyeCloud API calls."""
@@ -326,9 +329,29 @@ async def async_post_control(
         "Content-Type": "application/json",
     }
 
-    async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
+    # Retry submission only: once an order is accepted, never resubmit it
+    # because polling fails. These commands set explicit values, not toggles.
+    for attempt in range(1, _CONTROL_MAX_ATTEMPTS + 1):
+        try:
+            async with session.post(
+                url, json=payload, headers=headers, timeout=10
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+            break
+        except aiohttp.ClientResponseError as exc:
+            if exc.status != 500 or attempt == _CONTROL_MAX_ATTEMPTS:
+                raise
+            delay = _CONTROL_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+            _LOGGER.warning(
+                "DeyeCloud control endpoint %s returned HTTP 500 "
+                "(attempt %s/%s); retrying in %s seconds",
+                path,
+                attempt,
+                _CONTROL_MAX_ATTEMPTS,
+                delay,
+            )
+            await asyncio.sleep(delay)
 
     if not data.get("success", True):
         raise DeyeCloudOrderError(
