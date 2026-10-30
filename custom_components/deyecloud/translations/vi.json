@@ -30,7 +30,7 @@
     },
     "error": {
       "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL.",
-      "invalid_base_url": "Sử dụng https://eu1-developer.deyecloud.com/v1.0 hoặc https://us1-developer.deyecloud.com/v1.0.",
+      "invalid_base_url": "Chọn URL HTTPS API chính thức của EU hoặc Mỹ, kết thúc bằng /v1.0.",
       "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID.",
       "invalid_start_month": "Nhập tháng hiện tại hoặc trước đó theo định dạng YYYY-MM.",
       "cannot_connect": "Không thể kết nối DeyeCloud. Kiểm tra kết nối và thử lại.",
@@ -61,7 +61,7 @@
     },
     "error": {
       "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL.",
-      "invalid_base_url": "Sử dụng https://eu1-developer.deyecloud.com/v1.0 hoặc https://us1-developer.deyecloud.com/v1.0.",
+      "invalid_base_url": "Chọn URL HTTPS API chính thức của EU hoặc Mỹ, kết thúc bằng /v1.0.",
       "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID.",
       "invalid_start_month": "Nhập tháng hiện tại hoặc trước đó theo định dạng YYYY-MM.",
       "cannot_connect": "Không thể kết nối DeyeCloud. Kiểm tra kết nối và thử lại.",

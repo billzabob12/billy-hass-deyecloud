@@ -30,7 +30,7 @@
     },
     "error": {
       "auth_failed": "Authentication failed. Please check your username/email, password, App ID, App Secret, and Base URL.",
-      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
+      "invalid_base_url": "Choose an official EU or US HTTPS API base URL ending in /v1.0.",
       "no_stations_found": "No accessible stations found. Check station authorization and Company ID.",
       "invalid_start_month": "Enter a valid past or current month in YYYY-MM format.",
       "cannot_connect": "Cannot connect to DeyeCloud. Check your connection and try again.",
@@ -61,7 +61,7 @@
     },
     "error": {
       "auth_failed": "Authentication failed. Please check your username/email, password, App ID, App Secret, and Base URL.",
-      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
+      "invalid_base_url": "Choose an official EU or US HTTPS API base URL ending in /v1.0.",
       "no_stations_found": "No accessible stations found. Check station authorization and Company ID.",
       "invalid_start_month": "Enter a valid past or current month in YYYY-MM format.",
       "cannot_connect": "Cannot connect to DeyeCloud. Check your connection and try again.",
