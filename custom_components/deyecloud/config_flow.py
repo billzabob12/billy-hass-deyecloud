@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import selector
 
 from .const import (
     DOMAIN,
@@ -19,6 +20,7 @@ from .const import (
     CONF_COMPANY_ID,
 )
 from .api import async_get_token
+from .auth import DeyeCloudSession, normalize_base_url
 
 
 DEFAULT_BASE_URL = "https://eu1-developer.deyecloud.com/v1.0"
@@ -37,7 +39,7 @@ def _data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required(
             CONF_PASSWORD,
             default=defaults.get(CONF_PASSWORD, ""),
-        ): str,
+        ): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
         vol.Required(
             CONF_APP_ID,
             default=defaults.get(CONF_APP_ID, ""),
@@ -45,7 +47,7 @@ def _data_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         vol.Required(
             CONF_APP_SECRET,
             default=defaults.get(CONF_APP_SECRET, ""),
-        ): str,
+        ): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
         vol.Required(
             CONF_BASE_URL,
             default=defaults.get(CONF_BASE_URL, DEFAULT_BASE_URL),
@@ -67,15 +69,15 @@ def _normalize_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
 
     for key in (
         CONF_USERNAME,
-        CONF_PASSWORD,
         CONF_APP_ID,
-        CONF_APP_SECRET,
         CONF_BASE_URL,
         CONF_START_MONTH,
         CONF_COMPANY_ID,
     ):
         if key in data and isinstance(data[key], str):
             data[key] = data[key].strip()
+
+    data[CONF_BASE_URL] = normalize_base_url(data[CONF_BASE_URL])
 
     # Keep old entries clean: do not persist an empty optional company_id.
     if not data.get(CONF_COMPANY_ID):
@@ -86,7 +88,7 @@ def _normalize_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
 
 async def _async_validate_credentials_and_stations(hass, user_input: dict[str, Any]) -> None:
     """Validate credentials and ensure at least one station is accessible."""
-    session = async_get_clientsession(hass)
+    session = DeyeCloudSession(async_get_clientsession(hass), user_input)
 
     token = await async_get_token(
         session,
@@ -133,7 +135,13 @@ class DeyeCloudConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            user_input = _normalize_user_input(user_input)
+            try:
+                user_input = _normalize_user_input(user_input)
+            except ValueError:
+                return self.async_show_form(
+                    step_id="user", data_schema=_data_schema(user_input),
+                    errors={"base": "invalid_base_url"},
+                )
 
             unique_id = (
                 f"{user_input[CONF_USERNAME]}:"
@@ -180,7 +188,13 @@ class DeyeCloudOptionsFlowHandler(config_entries.OptionsFlow):
         current_data = dict(self._config_entry.data)
 
         if user_input is not None:
-            user_input = _normalize_user_input(user_input)
+            try:
+                user_input = _normalize_user_input(user_input)
+            except ValueError:
+                return self.async_show_form(
+                    step_id="init", data_schema=_data_schema(user_input),
+                    errors={"base": "invalid_base_url"},
+                )
 
             try:
                 await _async_validate_credentials_and_stations(self.hass, user_input)

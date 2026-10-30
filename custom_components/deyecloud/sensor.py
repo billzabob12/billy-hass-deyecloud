@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from datetime import date, datetime, timedelta
 
@@ -13,7 +12,6 @@ from dateutil.relativedelta import relativedelta
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -22,7 +20,8 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.util import dt as dt_util
 
-from .api import async_get_battery_config
+from .api import async_get_battery_config, async_get_token
+from .auth import get_api_session
 from .battery_parameters import (
     BATTERY_PARAMETER_DESCRIPTIONS,
     extract_battery_parameter,
@@ -195,21 +194,6 @@ def _resolve_daily_date_key(date_key: str) -> str:
     return date_key
 
 
-def _sha256(password: str) -> str:
-    """Hash DeyeCloud password."""
-    return hashlib.sha256(password.encode("utf-8")).hexdigest().lower()
-
-
-def _build_login_payload(login: str) -> dict[str, str]:
-    """Build DeyeCloud login payload using either email or username."""
-    login = login.strip()
-
-    if "@" in login:
-        return {"email": login}
-
-    return {"username": login}
-
-
 def _as_list(value):
     """Return value if it is a list, otherwise return an empty list."""
     return value if isinstance(value, list) else []
@@ -273,45 +257,15 @@ async def _post_json(
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             last_exc = exc
 
+            if isinstance(exc, aiohttp.ClientResponseError) and exc.status in (401, 403):
+                raise
+
             if attempt == 1:
                 break
 
             await asyncio.sleep(1)
 
     raise last_exc
-
-
-async def _async_get_token(
-    session: aiohttp.ClientSession,
-    username,
-    password,
-    app_id,
-    app_secret,
-    base_url,
-    company_id=None,
-):
-    """Get DeyeCloud access token."""
-    url = f"{base_url}/account/token?appId={app_id}"
-
-    _LOGGER.debug("Requesting token from API: %s", url)
-
-    payload = {
-        "appSecret": app_secret,
-        **_build_login_payload(username),
-        "password": _sha256(password),
-    }
-
-    if company_id:
-        payload["companyId"] = str(company_id).strip()
-
-    data = await _post_json(session, url, payload=payload, timeout=10)
-
-    if not data.get("success"):
-        _LOGGER.error("Token request failed: %s", data.get("msg"))
-        raise Exception(f"Token request failed: {data.get('msg')}")
-
-    _LOGGER.debug("Token request successful")
-    return data["accessToken"]
 
 
 async def _async_station_list(session, token, base_url):
@@ -512,9 +466,8 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
         )
 
         self.entry = entry
-        self.session = async_get_clientsession(hass)
+        self.session = get_api_session(hass, entry)
         self.token = None
-        self.token_expiry = None
         self._history_cache: dict[str, list[dict]] = {}
         self._history_last_update = None
 
@@ -527,25 +480,13 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
         base_url = self.entry.data[CONF_BASE_URL]
         company_id = self.entry.data.get(CONF_COMPANY_ID)
 
-        now_utc = dt_util.utcnow()
-
-        if not self.token or not self.token_expiry or self.token_expiry <= now_utc:
-            try:
-                self.token = await _async_get_token(
-                    self.session,
-                    username,
-                    password,
-                    app_id,
-                    app_secret,
-                    base_url,
-                    company_id,
-                )
-                self.token_expiry = dt_util.utcnow() + timedelta(minutes=25)
-
-                _LOGGER.debug("Token refreshed, valid until %s", self.token_expiry)
-
-            except Exception as exc:
-                raise UpdateFailed(f"Token refresh failed: {exc}") from exc
+        try:
+            self.token = await async_get_token(
+                self.session, username, password, app_id, app_secret,
+                base_url, company_id,
+            )
+        except Exception as exc:
+            raise UpdateFailed(f"Token refresh failed: {exc}") from exc
 
         try:
             stations = await _async_station_list(self.session, self.token, base_url)

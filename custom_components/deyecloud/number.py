@@ -7,13 +7,13 @@ from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import async_get_token, async_update_battery_parameter
 from .button import _async_fetch_inverter_devices, _async_fetch_station_list
 from .settings import async_get_settings_coordinator
+from .auth import get_api_session
 from .const import (
     CONF_APP_ID,
     CONF_APP_SECRET,
@@ -90,7 +90,7 @@ async def async_setup_entry(
     base_url = config.get(CONF_BASE_URL)
     company_id = config.get(CONF_COMPANY_ID)
 
-    session = async_get_clientsession(hass)
+    session = get_api_session(hass, entry)
     entities = []
 
     try:
@@ -141,6 +141,7 @@ async def async_setup_entry(
                         sn,
                         description,
                         coordinator,
+                        session,
                     )
                 )
 
@@ -167,9 +168,11 @@ class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
         device_sn,
         description: DeyeBatteryNumberDescription,
         coordinator,
+        session,
     ):
         super().__init__(coordinator)
         self.hass = hass
+        self._session = session
         self._username = username
         self._password = password
         self._app_id = app_id
@@ -214,7 +217,7 @@ class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set Deye battery/grid current value and wait for confirmation."""
-        session = async_get_clientsession(self.hass)
+        session = self._session
         last_exc = None
 
         try:

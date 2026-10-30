@@ -105,17 +105,16 @@ class ControlRetryTests(unittest.IsolatedAsyncioTestCase):
             await self.send()
         self.session.post.assert_called_once()
 
-    async def test_parameter_spelling_fallback_retains_bounded_retries(self):
-        self.session.post.side_effect = [response(500) for _ in range(3)] + [response()]
-        result = await api.async_update_battery_parameter(
-            self.session, "test-token", "https://example.invalid", "test-device",
-            "GRID_CHARGE_AMPERE", 190, wait_for_result=False,
-        )
-        self.assertEqual(result["orderId"], 123)
+    async def test_parameter_failure_does_not_start_another_retry_batch(self):
+        self.session.post.side_effect = [response(500) for _ in range(3)]
+        with self.assertRaises(aiohttp.ClientResponseError):
+            await api.async_update_battery_parameter(
+                self.session, "test-token", "https://example.invalid", "test-device",
+                "GRID_CHARGE_AMPERE", 190, wait_for_result=False,
+            )
         calls = self.session.post.call_args_list
-        self.assertEqual(len(calls), 4)
-        self.assertIn("paramterType", calls[0].kwargs["json"])
-        self.assertIn("parameterType", calls[-1].kwargs["json"])
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all("paramterType" in c.kwargs["json"] for c in calls))
 
 
 if __name__ == "__main__":

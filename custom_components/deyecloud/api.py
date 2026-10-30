@@ -52,6 +52,12 @@ async def async_get_token(
     company_id=None,
 ):
     """Get DeyeCloud access token."""
+    if hasattr(session, "async_get_token"):
+        return await session.async_get_token()
+
+    from .auth import normalize_base_url
+
+    base_url = normalize_base_url(base_url)
     url = f"{base_url}/account/token?appId={app_id}"
 
     payload = {
@@ -63,14 +69,19 @@ async def async_get_token(
     if company_id:
         payload["companyId"] = str(company_id).strip()
 
-    async with session.post(url, json=payload, timeout=10) as resp:
+    async with session.post(url, json=payload, timeout=10, allow_redirects=False) as resp:
         resp.raise_for_status()
+        if 300 <= resp.status < 400:
+            raise DeyeCloudApiError("Token endpoint redirects are not supported")
         data = await resp.json()
 
     if not data.get("success"):
-        raise DeyeCloudApiError(f"Token request failed: {data.get('msg') or data}")
+        raise DeyeCloudApiError("DeyeCloud rejected the token request")
 
-    return data["accessToken"]
+    token = data.get("accessToken")
+    if not isinstance(token, str) or not token:
+        raise DeyeCloudApiError("DeyeCloud returned no access token")
+    return token
 
 
 async def async_post_json(
@@ -438,39 +449,13 @@ async def async_update_battery_parameter(
     *,
     wait_for_result: bool = True,
 ):
+    """Set a battery parameter using Deye's documented 'paramterType' key.
+
+    Do not resubmit a command after a timeout or an uncertain order result:
+    the original command may already have reached the inverter.
     """
-    Set Deye battery parameter value.
-
-    Deye's official sample uses the misspelled key 'paramterType',
-    so try that first and fall back to 'parameterType'.
-    """
-    last_exc = None
-
-    for field_name in ("paramterType", "parameterType"):
-        payload = {
-            "deviceSn": device_sn,
-            field_name: parameter_type,
-            "value": value,
-        }
-
-        try:
-            return await async_post_control(
-                session,
-                token,
-                base_url,
-                "/order/battery/parameter/update",
-                payload,
-                wait_for_result=wait_for_result,
-            )
-        except Exception as exc:
-            last_exc = exc
-            _LOGGER.warning(
-                "DeyeCloud battery parameter update failed using %s=%s. "
-                "Will %s. Error: %s",
-                field_name,
-                parameter_type,
-                "try fallback spelling" if field_name == "paramterType" else "raise",
-                exc,
-            )
-
-    raise last_exc
+    return await async_post_control(
+        session, token, base_url, "/order/battery/parameter/update",
+        {"deviceSn": device_sn, "paramterType": parameter_type, "value": value},
+        wait_for_result=wait_for_result,
+    )
