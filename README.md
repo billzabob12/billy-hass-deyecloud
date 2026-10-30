@@ -1,9 +1,8 @@
 
-## 👤 Owner
+## 👤 Maintainer
 
-- **Name**: Trần Công Tuấn Anh  
-- **GitHub**: [@heavenknows1978](https://github.com/heavenknows1978)  
-- **Repo**: [hass-deyecloud](https://github.com/heavenknows1978/hass-deyecloud)  
+- **Maintainer**: [Billy (@billzabob12)](https://github.com/billzabob12)
+- **Repo**: [billy-hass-deyecloud](https://github.com/billzabob12/billy-hass-deyecloud)
 - **License**: MIT
 
 # 🌞 Deye Cloud Home Assistant Integration
@@ -34,7 +33,7 @@ A custom integration to connect your Home Assistant with your Deye solar inverte
 ### Option 2: Via HACS
 
 1. Go to HACS → Integrations → 3-dot menu → Custom repositories
-2. Add: `https://github.com/heavenknows1978/hass-deyecloud` (as Integration)
+2. Add: `https://github.com/billzabob12/billy-hass-deyecloud` (as Integration)
 3. Search for "DeyeCloud" in HACS Integrations and install
 4. Restart Home Assistant and add via UI
 
@@ -86,7 +85,7 @@ Depending on your region:
 
 > Sample Lovelace dashboard tiles showing PV generation, consumption, battery usage, grid stats etc.
 
-![Dashboard](https://raw.githubusercontent.com/heavenknows1978/hass-deyecloud/main/screenshot.png)
+Dashboard examples can be added here as they become available.
 
 ---
 
@@ -101,10 +100,10 @@ The controls expose `state_source` and `settings_read_at` attributes.
 
 `/config/battery` supplies decoded current limits. Grid-charge enable/current
 are read through `/strategy/dynamicControl/read` and the returned order result.
-Register decoding follows the upstream project's single-phase low-voltage hybrid
+Register decoding follows the original project's single-phase low-voltage hybrid
 layout, guarded by layout markers `00F4` and `00F8`. Other layouts are left unknown.
 See [Deye's API schemas](https://developer.deyecloud.com/openmcp/docs/deye-open-mcp-tools.html)
-and [upstream decoder](https://github.com/heavenknows1978/hass-deyecloud/blob/main/custom_components/deyecloud/control_payloads.py).
+and [control payload decoder](https://github.com/billzabob12/billy-hass-deyecloud/blob/main/custom_components/deyecloud/control_payloads.py).
 
 Missing, unsupported or failed readings make the affected controls unavailable;
 they never fall back to the requested setting. This can prevent automations from
@@ -134,6 +133,10 @@ it still needs installation testing against your Home Assistant and inverter.
 - Ensure `custom_components/deyecloud/` has correct permissions
 
 ---
+
+## Credits
+
+Originally developed by [Trần Công Tuấn Anh (@heavenknows1978)](https://github.com/heavenknows1978/hass-deyecloud). This repository is maintained by [@billzabob12](https://github.com/billzabob12).
 
 ## 📄 License
 

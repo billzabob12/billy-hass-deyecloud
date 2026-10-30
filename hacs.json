@@ -3,9 +3,9 @@
   "domain": "deyecloud",
   "version": "1.0.17",
   "homeassistant": "2022.5.0",
-  "codeowners": ["@heavenknows1978"],
-  "documentation": "https://github.com/heavenknows1978/hass-deyecloud",
-  "issue_tracker": "https://github.com/heavenknows1978/hass-deyecloud/issues",
+  "codeowners": ["@billzabob12"],
+  "documentation": "https://github.com/billzabob12/billy-hass-deyecloud",
+  "issue_tracker": "https://github.com/billzabob12/billy-hass-deyecloud/issues",
   "config_flow": true,
   "requirements": []
 }

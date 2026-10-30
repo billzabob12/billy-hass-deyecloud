@@ -2,10 +2,10 @@
   "domain": "deyecloud",
   "name": "Deye Cloud Home Assistant Integration",
   "version": "1.0.20",
-  "documentation": "https://github.com/heavenknows1978/hass-deyecloud",
+  "documentation": "https://github.com/billzabob12/billy-hass-deyecloud",
   "dependencies": [],
   "codeowners": [
-    "@heavenknows1978"
+    "@billzabob12"
   ],
   "config_flow": true,
   "requirements": [],
