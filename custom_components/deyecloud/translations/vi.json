@@ -13,12 +13,34 @@
           "start_month": "Tháng bắt đầu",
           "company_id": "Company ID (không bắt buộc)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Xác thực lại DeyeCloud",
+        "description": "Nhập thông tin DeyeCloud OpenAPI.",
+        "data": {
+          "username": "Tên đăng nhập hoặc email",
+          "password": "Mật khẩu",
+          "app_id": "App ID",
+          "app_secret": "App Secret",
+          "base_url": "Base URL",
+          "start_month": "Tháng bắt đầu",
+          "company_id": "Company ID (không bắt buộc)"
+        }
       }
     },
     "error": {
       "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL.",
-      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
-      "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID."
+      "invalid_base_url": "Sử dụng https://eu1-developer.deyecloud.com/v1.0 hoặc https://us1-developer.deyecloud.com/v1.0.",
+      "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID.",
+      "invalid_start_month": "Nhập tháng hiện tại hoặc trước đó theo định dạng YYYY-MM.",
+      "cannot_connect": "Không thể kết nối DeyeCloud. Kiểm tra kết nối và thử lại.",
+      "unknown": "Đã xảy ra lỗi không mong đợi. Kiểm tra nhật ký Home Assistant.",
+      "already_configured": "Tài khoản và công ty DeyeCloud này đã được cấu hình.",
+      "account_mismatch": "Xác thực lại bằng tài khoản hiện tại. Dùng Cấu hình để đổi tài khoản."
+    },
+    "abort": {
+      "already_configured": "Tài khoản đã được cấu hình.",
+      "reauth_successful": "Xác thực lại thành công."
     }
   },
   "options": {
@@ -39,8 +61,13 @@
     },
     "error": {
       "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL.",
-      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
-      "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID."
+      "invalid_base_url": "Sử dụng https://eu1-developer.deyecloud.com/v1.0 hoặc https://us1-developer.deyecloud.com/v1.0.",
+      "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID.",
+      "invalid_start_month": "Nhập tháng hiện tại hoặc trước đó theo định dạng YYYY-MM.",
+      "cannot_connect": "Không thể kết nối DeyeCloud. Kiểm tra kết nối và thử lại.",
+      "unknown": "Đã xảy ra lỗi không mong đợi. Kiểm tra nhật ký Home Assistant.",
+      "already_configured": "Tài khoản và công ty DeyeCloud này đã được cấu hình.",
+      "account_mismatch": "Xác thực lại bằng tài khoản hiện tại. Dùng Cấu hình để đổi tài khoản."
     }
   }
 }

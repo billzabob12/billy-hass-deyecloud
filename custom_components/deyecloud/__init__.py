@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_loaded_integration
 
 from .const import DOMAIN
+from .discovery import DeyeDiscoveryCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,11 +55,26 @@ async def _async_preload_platforms(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DeyeCloud from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {}
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     await _async_preload_platforms(hass, PLATFORMS)
+
+    # Validate and discover before forwarding platforms, so HA retries startup
+    # failures instead of silently marking individual platforms as loaded.
+    from .sensor import DeyeCloudCoordinator
+
+    runtime = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    discovery = runtime["discovery"] = DeyeDiscoveryCoordinator(hass, entry)
+    await discovery.async_config_entry_first_refresh()
+    coordinator = runtime["coordinator"] = DeyeCloudCoordinator(hass, entry)
+    await coordinator.async_config_entry_first_refresh()
+    entry.async_on_unload(
+        discovery.async_add_listener(
+            lambda: hass.async_create_task(coordinator.async_request_refresh())
+        )
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -72,16 +88,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
     return unload_ok
-
-
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Reload the DeyeCloud config entry."""
-    unload_ok = await async_unload_entry(hass, entry)
-
-    if not unload_ok:
-        return False
-
-    return await async_setup_entry(hass, entry)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

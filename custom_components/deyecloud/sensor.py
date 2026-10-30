@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import date, datetime, timedelta
 
 import aiohttp
 from dateutil.relativedelta import relativedelta
-
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -20,7 +21,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.util import dt as dt_util
 
-from .api import async_get_battery_config, async_get_token
+from .api import DeyeCloudAuthError, async_get_token
 from .auth import get_api_session
 from .battery_parameters import (
     BATTERY_PARAMETER_DESCRIPTIONS,
@@ -36,12 +37,13 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
 )
+from .settings import async_get_settings_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(minutes=1)
 HISTORY_REFRESH_INTERVAL = timedelta(hours=6)
-HISTORY_START_MONTH = "2024-01"
+DEFAULT_HISTORY_START_MONTH = "2024-01"
 
 _RELATIVE_DAY_OFFSETS = {
     "today": 0,
@@ -54,28 +56,6 @@ _DAILY_LABELS = {
     "yesterday": "Yesterday",
     "today": "Today",
 }
-
-_DAILY_ZERO_RECORD_KEYS = (
-    "generationValue",
-    "consumptionValue",
-    "gridValue",
-    "purchaseValue",
-    "chargeValue",
-    "dischargeValue",
-)
-
-_MIDNIGHT_STALE_GUARD = timedelta(hours=2)
-_FLOAT_EPSILON = 0.001
-
-
-def _empty_daily_record(day: str) -> dict:
-    """Return an explicit zero daily record for a date."""
-    record = {"date": day}
-
-    for key in _DAILY_ZERO_RECORD_KEYS:
-        record[key] = 0.0
-
-    return record
 
 
 def _parse_api_date(value) -> date | None:
@@ -105,52 +85,6 @@ def _parse_api_date(value) -> date | None:
         return datetime.strptime(text[:10], "%Y-%m-%d").date()
     except ValueError:
         return None
-
-
-def _numeric_value(record: dict | None, key: str) -> float | None:
-    """Return a numeric value from a daily/monthly record if possible."""
-    if not record:
-        return None
-
-    try:
-        value = record.get(key)
-
-        if value is None or value == "":
-            return None
-
-        return float(value)
-
-    except (TypeError, ValueError):
-        return None
-
-
-def _records_look_like_same_daily_bucket(
-    record: dict | None,
-    reference: dict | None,
-) -> bool:
-    """Detect a stale daily record that is likely copied from yesterday."""
-    if not record or not reference:
-        return False
-
-    matched_non_zero_values = 0
-
-    for key in _DAILY_ZERO_RECORD_KEYS:
-        current = _numeric_value(record, key)
-        previous = _numeric_value(reference, key)
-
-        if current is None or previous is None:
-            continue
-
-        if previous > _FLOAT_EPSILON and abs(current - previous) <= _FLOAT_EPSILON:
-            matched_non_zero_values += 1
-
-    return matched_non_zero_values >= 2
-
-
-def _is_midnight_guard_window(now: datetime) -> bool:
-    """Return True during the local post-midnight stale-data guard window."""
-    start = datetime.combine(now.date(), datetime.min.time(), tzinfo=now.tzinfo)
-    return now - start < _MIDNIGHT_STALE_GUARD
 
 
 def _select_daily_record(
@@ -205,9 +139,10 @@ def _as_float_or_original(value):
         return None
 
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
-        return value
+        return None
 
 
 def _normalize_unit(unit: str | None) -> str | None:
@@ -257,7 +192,12 @@ async def _post_json(
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             last_exc = exc
 
-            if isinstance(exc, aiohttp.ClientResponseError) and exc.status in (401, 403):
+            if isinstance(exc, aiohttp.ClientResponseError) and exc.status not in (
+                500,
+                502,
+                503,
+                504,
+            ):
                 raise
 
             if attempt == 1:
@@ -268,35 +208,14 @@ async def _post_json(
     raise last_exc
 
 
-async def _async_station_list(session, token, base_url):
-    """Fetch station list from DeyeCloud."""
-    url = f"{base_url}/station/list"
-
-    _LOGGER.debug("Fetching station list from API: %s", url)
-
-    headers = {"Authorization": f"Bearer {token}"}
-
-    data = await _post_json(session, url, headers=headers, payload={}, timeout=10)
-
-    if not data.get("success", True):
-        _LOGGER.error("Station list request failed: %s", data.get("msg"))
-        raise Exception(f"Station list request failed: {data.get('msg')}")
-
-    stations = _as_list(data.get("stationList"))
-
-    _LOGGER.info("Received %d stations from API", len(stations))
-
-    return stations
-
-
-async def _async_history(session, token, station_id, base_url):
-    """Fetch monthly history from HISTORY_START_MONTH to current month."""
+async def _async_history(session, token, station_id, base_url, start_month):
+    """Fetch monthly history from the entry start month to current month."""
     url = f"{base_url}/station/history"
     headers = {"Authorization": f"Bearer {token}"}
 
     items: list[dict] = []
 
-    start_dt = datetime.strptime(HISTORY_START_MONTH, "%Y-%m")
+    start_dt = datetime.strptime(start_month, "%Y-%m")
     start: date = start_dt.date().replace(day=1)
     end: date = dt_util.now().date().replace(day=1)
 
@@ -326,7 +245,7 @@ async def _async_history(session, token, station_id, base_url):
                 station_id,
                 data.get("msg"),
             )
-            raise Exception(f"History request failed: {data.get('msg')}")
+            raise UpdateFailed(f"History request failed: {data.get('msg')}")
 
         items.extend(_as_list(data.get("stationDataItems")))
 
@@ -364,70 +283,13 @@ async def _async_daily_history(session, token, station_id, base_url, start_date,
             station_id,
             data.get("msg"),
         )
-        raise Exception(f"Daily history request failed: {data.get('msg')}")
+        raise UpdateFailed(f"Daily history request failed: {data.get('msg')}")
 
     items = _as_list(data.get("stationDataItems"))
 
     _LOGGER.debug("Received %d daily records for station_id %s", len(items), station_id)
 
     return items
-
-
-async def _async_get_device_list(session, token, base_url, stations):
-    """Fetch inverter device serial numbers from DeyeCloud."""
-    url = f"{base_url}/station/device"
-
-    _LOGGER.debug("Fetching device list from API: %s", url)
-
-    headers = {"Authorization": f"Bearer {token}"}
-
-    station_ids = [
-        station.get("id") or station.get("stationId")
-        for station in _as_list(stations)
-        if station.get("id") or station.get("stationId")
-    ]
-
-    if not station_ids:
-        _LOGGER.warning("No stationIds available for request")
-        return []
-
-    page = 1
-    size = 100
-    devices = []
-
-    while True:
-        payload = {
-            "page": page,
-            "size": size,
-            "stationIds": station_ids,
-        }
-
-        _LOGGER.debug("Sending device payload: %s", payload)
-
-        data = await _post_json(session, url, headers=headers, payload=payload, timeout=10)
-
-        if not data.get("success"):
-            _LOGGER.error("Device list request failed: %s", data.get("msg"))
-            raise Exception(f"Device list request failed: {data.get('msg')}")
-
-        page_items = _as_list(data.get("deviceListItems"))
-        devices.extend(page_items)
-
-        total = data.get("total") or data.get("totalCount")
-
-        if total is not None and len(devices) >= int(total):
-            break
-
-        if len(page_items) < size:
-            break
-
-        page += 1
-
-    return [
-        item["deviceSn"]
-        for item in devices
-        if item.get("deviceType") == "INVERTER" and item.get("deviceSn")
-    ]
 
 
 async def _async_get_device_status(session, token, base_url, device_list):
@@ -446,7 +308,7 @@ async def _async_get_device_status(session, token, base_url, device_list):
 
     if not data.get("success"):
         _LOGGER.error("Device status request failed: %s", data.get("msg"))
-        raise Exception(f"Device status request failed: {data.get('msg')}")
+        raise UpdateFailed(f"Device status request failed: {data.get('msg')}")
 
     _LOGGER.debug("Received device status: %s", data)
 
@@ -462,6 +324,7 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="Deye Cloud",
+            config_entry=entry,
             update_interval=SCAN_INTERVAL,
         )
 
@@ -469,7 +332,11 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
         self.session = get_api_session(hass, entry)
         self.token = None
         self._history_cache: dict[str, list[dict]] = {}
-        self._history_last_update = None
+        self._history_last_update = {}
+        self._start_month = _validate_history_start_month(entry.data.get(CONF_START_MONTH))
+        self._daily_cache = {}
+        self._daily_last_update = {}
+        self._station_semaphore = asyncio.Semaphore(3)
 
     async def _async_update_data(self) -> dict:
         """Fetch data from DeyeCloud."""
@@ -482,14 +349,22 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
 
         try:
             self.token = await async_get_token(
-                self.session, username, password, app_id, app_secret,
-                base_url, company_id,
+                self.session,
+                username,
+                password,
+                app_id,
+                app_secret,
+                base_url,
+                company_id,
             )
+        except DeyeCloudAuthError as exc:
+            raise ConfigEntryAuthFailed("DeyeCloud credentials were rejected") from exc
         except Exception as exc:
             raise UpdateFailed(f"Token refresh failed: {exc}") from exc
 
         try:
-            stations = await _async_station_list(self.session, self.token, base_url)
+            discovery = self.hass.data[DOMAIN][self.entry.entry_id]["discovery"]
+            stations = (discovery.data or {}).get("stations", [])
 
             if not stations:
                 raise UpdateFailed("No stations found")
@@ -518,6 +393,8 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
         results = await asyncio.gather(*station_tasks, return_exceptions=True)
 
         for result in results:
+            if isinstance(result, (DeyeCloudAuthError, ConfigEntryAuthFailed)):
+                raise ConfigEntryAuthFailed("DeyeCloud credentials were rejected") from result
             if isinstance(result, Exception):
                 _LOGGER.error("Error updating station data: %s", result)
             elif result:
@@ -527,235 +404,100 @@ class DeyeCloudCoordinator(DataUpdateCoordinator):
         return station_data
 
     async def _get_monthly_history_cached(self, session, station_id, base_url):
-        """Return monthly history, refreshing cache only periodically."""
+        """Keep a separate refresh timestamp for each station."""
         now = dt_util.now()
-        cached_history = self._history_cache.get(station_id, [])
-
-        current_month_present = any(
+        last = self._history_last_update.get(station_id)
+        history = self._history_cache.get(station_id, [])
+        has_current = any(
             record.get("year") == now.year and record.get("month") == now.month
-            for record in cached_history
+            for record in history
         )
-
-        needs_refresh = (
-            station_id not in self._history_cache
-            or self._history_last_update is None
-            or now - self._history_last_update > HISTORY_REFRESH_INTERVAL
-            or (
-                not current_month_present
-                and now - self._history_last_update > timedelta(minutes=10)
-            )
-        )
-
-        if needs_refresh:
+        interval = HISTORY_REFRESH_INTERVAL if has_current else timedelta(minutes=10)
+        if last is None or now - last >= interval:
             self._history_cache[station_id] = await _async_history(
                 session,
                 self.token,
                 station_id,
                 base_url,
+                self._start_month,
             )
-            self._history_last_update = now
-
+            self._history_last_update[station_id] = now
         return self._history_cache.get(station_id, [])
 
     async def _async_update_station_data(self, session, station_id, base_url, station_info):
-        """Fetch data for a single station."""
-        previous_station_data = (self.data or {}).get(station_id, {})
-        previous_daily = previous_station_data.get("daily", {})
+        async with self._station_semaphore:
+            return await self._async_fetch_station_data(session, station_id, base_url, station_info)
 
+    async def _async_fetch_station_data(self, session, station_id, base_url, station_info):
+        """Return unknown readings on failure, never manufactured zero energy."""
+        now = dt_util.now()
+        today = now.date()
         data = {
             "info": station_info,
             "history": [],
-            "daily": dict(previous_daily),
+            "daily": {},
             "devices": {},
             "battery_config": {},
+            "history_read_at": None,
+            "daily_read_at": None,
         }
-
         try:
-            data["history"] = await self._get_monthly_history_cached(
-                session,
-                station_id,
-                base_url,
-            )
+            data["history"] = await self._get_monthly_history_cached(session, station_id, base_url)
+        except DeyeCloudAuthError:
+            raise
         except Exception as exc:
-            _LOGGER.error("Error updating monthly history for station %s: %s", station_id, exc)
+            _LOGGER.warning("Monthly history unavailable for station %s: %s", station_id, exc)
             data["history"] = self._history_cache.get(station_id, [])
+        last = self._history_last_update.get(station_id)
+        data["history_read_at"] = last.isoformat() if last else None
 
-        now_local = dt_util.now()
-
-        if not any(
-            record.get("year") == now_local.year and record.get("month") == now_local.month
-            for record in data["history"]
-        ):
-            current_month_record = {
-                "year": now_local.year,
-                "month": now_local.month,
-            }
-
-            for key in _DAILY_ZERO_RECORD_KEYS:
-                current_month_record[key] = 0.0
-
-            data["history"] = [*data["history"], current_month_record]
-
+        # Completed days are refreshed daily; today's total remains live.
+        last_daily = self._daily_last_update.get(station_id)
+        refresh_completed = last_daily is None or now - last_daily >= timedelta(hours=24)
+        cached = self._daily_cache.get(station_id, {})
+        wanted = [(today - timedelta(days=offset)).isoformat() for offset in (2, 1, 0)]
+        if any(day not in cached for day in wanted[:-1]):
+            refresh_completed = True
+        start = wanted[0] if refresh_completed else wanted[-1]
+        data["daily"] = {day: cached[day] for day in wanted[:-1] if day in cached}
         try:
-            today_date = dt_util.now().date()
-
-            days = [
-                today_date - timedelta(days=2),
-                today_date - timedelta(days=1),
-                today_date,
-            ]
-
-            range_daily_items = []
-
-            try:
-                range_daily_items = await _async_daily_history(
-                    session,
-                    self.token,
-                    station_id,
-                    base_url,
-                    days[0].isoformat(),
-                    (today_date + timedelta(days=1)).isoformat(),
-                )
-            except Exception as exc:
-                _LOGGER.debug(
-                    "Daily history rolling-window request failed for station %s: %s",
-                    station_id,
-                    exc,
-                )
-
-            for d in days:
-                day = d.isoformat()
-                next_day = d + timedelta(days=1)
-                next_day_str = next_day.isoformat()
-                now = dt_util.now()
-                in_midnight_guard = d == today_date and _is_midnight_guard_window(now)
-
-                matched_item = _select_daily_record(
-                    range_daily_items,
-                    day,
-                    allow_undated_fallback=False,
-                )
-
-                daily_items = []
-
-                if matched_item is None:
-                    try:
-                        daily_items = await _async_daily_history(
-                            session,
-                            self.token,
-                            station_id,
-                            base_url,
-                            day,
-                            next_day_str,
-                        )
-                    except Exception as exc:
-                        _LOGGER.debug(
-                            "Daily history primary request failed for station %s day %s: %s",
-                            station_id,
-                            day,
-                            exc,
-                        )
-
-                    if not daily_items:
-                        try:
-                            daily_items = await _async_daily_history(
-                                session,
-                                self.token,
-                                station_id,
-                                base_url,
-                                day,
-                                day,
-                            )
-                        except Exception as exc:
-                            _LOGGER.debug(
-                                "Daily history fallback request failed for station %s day %s: %s",
-                                station_id,
-                                day,
-                                exc,
-                            )
-
-                    if not daily_items:
-                        if d == today_date:
-                            data["daily"][day] = _empty_daily_record(day)
-
-                        continue
-
-                    matched_item = _select_daily_record(
-                        daily_items,
-                        day,
-                        allow_undated_fallback=not in_midnight_guard,
-                    )
-
-                if matched_item is not None and d == today_date and in_midnight_guard:
-                    yesterday_key = (today_date - timedelta(days=1)).isoformat()
-                    yesterday_record = data["daily"].get(yesterday_key)
-
-                    if _records_look_like_same_daily_bucket(matched_item, yesterday_record):
-                        _LOGGER.debug(
-                            "Ignoring stale DeyeCloud daily record for station %s day %s during midnight guard",
-                            station_id,
-                            day,
-                        )
-                        matched_item = _empty_daily_record(day)
-
-                if matched_item is not None:
-                    data["daily"][day] = matched_item
-
-                elif d == today_date:
-                    data["daily"][day] = _empty_daily_record(day)
-
-        except Exception as exc:
-            _LOGGER.error("Error updating daily history for station %s: %s", station_id, exc)
-
-        try:
-            device_sns = await _async_get_device_list(
-                session,
-                self.token,
-                base_url,
-                [station_info],
+            items = await _async_daily_history(
+                session, self.token, station_id, base_url, start, wanted[-1]
             )
-
-            if device_sns:
-                device_status = await _async_get_device_status(
-                    session,
-                    self.token,
-                    base_url,
-                    device_sns,
-                )
-
-                for device in device_status:
-                    sn = device.get("deviceSn")
-
-                    if sn:
-                        data["devices"][str(sn)] = device
-
-                battery_config_results = await asyncio.gather(
-                    *[
-                        async_get_battery_config(
-                            session,
-                            self.token,
-                            base_url,
-                            device_sn,
-                        )
-                        for device_sn in device_sns
-                    ],
-                    return_exceptions=True,
-                )
-
-                for device_sn, result in zip(device_sns, battery_config_results):
-                    if isinstance(result, Exception):
-                        _LOGGER.warning(
-                            "Error updating battery config for device %s: %s",
-                            device_sn,
-                            result,
-                        )
-                        continue
-
-                    data["battery_config"][str(device_sn)] = result
-
+            for day in wanted if refresh_completed else wanted[-1:]:
+                record = _select_daily_record(items, day, allow_undated_fallback=False)
+                if record is not None:
+                    data["daily"][day] = record
+            self._daily_cache[station_id] = dict(data["daily"])
+            if refresh_completed:
+                self._daily_last_update[station_id] = now
+            data["daily_read_at"] = now.isoformat()
+        except DeyeCloudAuthError:
+            raise
         except Exception as exc:
-            _LOGGER.error("Error updating devices for station %s: %s", station_id, exc)
+            _LOGGER.warning("Daily readings unavailable for station %s: %s", station_id, exc)
 
+        discovery = self.hass.data[DOMAIN][self.entry.entry_id]["discovery"]
+        devices = (discovery.data or {}).get("devices", {}).get(station_id, [])
+        serials = [str(device["deviceSn"]) for device in devices]
+        # Preserve discovery metadata so battery sensors exist before telemetry.
+        data["devices"] = {str(device["deviceSn"]): dict(device) for device in devices}
+        try:
+            for offset in range(0, len(serials), 100):
+                status = await _async_get_device_status(
+                    session, self.token, base_url, serials[offset : offset + 100]
+                )
+                for device in status:
+                    if device.get("deviceSn"):
+                        data["devices"][str(device["deviceSn"])] = device
+        except DeyeCloudAuthError:
+            raise
+        except Exception as exc:
+            _LOGGER.warning("Device readings unavailable for station %s: %s", station_id, exc)
+        for sn in serials:
+            settings = await async_get_settings_coordinator(self.hass, self.entry, sn)
+            if settings.last_update_success:
+                data["battery_config"][sn] = settings.battery_config
         return station_id, data
 
 
@@ -829,10 +571,7 @@ class DeyeCloudSensor(CoordinatorEntity, SensorEntity):
                     target = dt_util.now() - relativedelta(months=1)
 
                 for record in station_data.get("history", []):
-                    if (
-                        record.get("year") == target.year
-                        and record.get("month") == target.month
-                    ):
+                    if record.get("year") == target.year and record.get("month") == target.month:
                         return _as_float_or_original(record.get(self._metric_key))
 
             elif self._sensor_type == "daily":
@@ -865,6 +604,10 @@ class DeyeCloudSensor(CoordinatorEntity, SensorEntity):
         return None
 
     @property
+    def available(self):
+        return super().available and self.native_value is not None
+
+    @property
     def device_info(self):
         """Return device information."""
         if self._device_sn:
@@ -889,6 +632,30 @@ class DeyeCloudSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self):
         """Return additional state attributes."""
         attrs = self._extra_attributes.copy()
+        station = (self.coordinator.data or {}).get(self._station_id, {})
+        if self._sensor_type == "monthly_raw":
+            year, month = map(int, self._date_key.split("_"))
+            attrs.update(
+                next(
+                    (
+                        record
+                        for record in station.get("history", [])
+                        if record.get("year") == year and record.get("month") == month
+                    ),
+                    {},
+                )
+            )
+        if self._sensor_type.startswith("monthly"):
+            attrs["data_read_at"] = station.get("history_read_at")
+        elif self._sensor_type == "daily":
+            attrs["data_read_at"] = station.get("daily_read_at")
+        if self._sensor_type == "device":
+            device = station.get("devices", {}).get(self._device_sn, {})
+            attrs.update(
+                device_type=device.get("deviceType"),
+                device_state=device.get("deviceState"),
+                collection_time=device.get("collectionTime"),
+            )
 
         if self._station_id:
             attrs["station_id"] = self._station_id
@@ -926,18 +693,8 @@ async def async_setup_entry(
     """Set up Deye Cloud sensors from a config entry."""
     _LOGGER.info("Setting up DeyeCloud integration")
 
-    global HISTORY_START_MONTH
-    HISTORY_START_MONTH = _validate_history_start_month(
-        entry.data.get(CONF_START_MONTH, "2024-01")
-    )
-
-    _LOGGER.debug("HISTORY_START_MONTH set to: %s", HISTORY_START_MONTH)
-
-    coordinator = DeyeCloudCoordinator(hass, entry)
-
-    await coordinator.async_config_entry_first_refresh()
-
-    entities = []
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    known = set()
 
     monthly_metrics = [
         ("generationValue", "Solar Generation"),
@@ -957,182 +714,189 @@ async def async_setup_entry(
         ("dischargeValue", "Daily Battery Discharge"),
     ]
 
-    for station_id, station_data in coordinator.data.items():
-        station_id = str(station_id)
+    @callback
+    def discover_sensors():
+        entities = []
+        for station_id, station_data in coordinator.data.items():
+            station_id = str(station_id)
 
-        for record in station_data.get("history", []):
-            y = record.get("year")
-            m = record.get("month")
+            for record in station_data.get("history", []):
+                y = record.get("year")
+                m = record.get("month")
 
-            if not y or not m:
-                continue
+                if not y or not m:
+                    continue
 
-            month_name = datetime(year=y, month=m, day=1).strftime("%b %Y")
+                month_name = datetime(year=y, month=m, day=1).strftime("%b %Y")
 
-            name = f"Deye {station_id} {month_name}"
-            uid = f"{station_id}_raw_{y}_{m:02d}"
-
-            entities.append(
-                DeyeCloudSensor(
-                    coordinator=coordinator,
-                    sensor_type="monthly_raw",
-                    name=name,
-                    unique_id=uid,
-                    unit="kWh",
-                    device_class="energy",
-                    state_class="total",
-                    station_id=station_id,
-                    date_key=f"{y}_{m}",
-                    extra_attributes=record,
-                )
-            )
-
-        for metric_key, metric_name in monthly_metrics:
-            name = f"{metric_name} {station_id}"
-            uid = f"{station_id}_{metric_key}_current_month"
-
-            entities.append(
-                DeyeCloudSensor(
-                    coordinator=coordinator,
-                    sensor_type="monthly_metric",
-                    name=name,
-                    unique_id=uid,
-                    unit="kWh",
-                    device_class="energy",
-                    state_class="total_increasing",
-                    station_id=station_id,
-                    date_key="current",
-                    metric_key=metric_key,
-                    extra_attributes={"metric": metric_name},
-                )
-            )
-
-            name = f"{metric_name} Last Month {station_id}"
-            uid = f"{station_id}_{metric_key}_last_month"
-
-            entities.append(
-                DeyeCloudSensor(
-                    coordinator=coordinator,
-                    sensor_type="monthly_metric",
-                    name=name,
-                    unique_id=uid,
-                    unit="kWh",
-                    device_class="energy",
-                    state_class="total",
-                    station_id=station_id,
-                    date_key="last",
-                    metric_key=metric_key,
-                    extra_attributes={"metric": metric_name},
-                )
-            )
-
-        for rel_key, label in _DAILY_LABELS.items():
-            for metric_key, metric_name in daily_metrics:
-                name = f"{metric_name} {label} {station_id}"
-                uid = f"{station_id}_{metric_key}_{rel_key}"
+                name = f"Deye {station_id} {month_name}"
+                uid = f"{station_id}_raw_{y}_{m:02d}"
 
                 entities.append(
                     DeyeCloudSensor(
                         coordinator=coordinator,
-                        sensor_type="daily",
+                        sensor_type="monthly_raw",
                         name=name,
                         unique_id=uid,
                         unit="kWh",
                         device_class="energy",
-                        state_class="total_increasing" if rel_key == "today" else "total",
+                        state_class="total",
                         station_id=station_id,
-                        date_key=rel_key,
-                        metric_key=metric_key,
-                        extra_attributes={"relative_day": rel_key},
+                        date_key=f"{y}_{m}",
+                        extra_attributes=record,
                     )
                 )
 
-        for device_sn, device_data in station_data.get("devices", {}).items():
-            device_sn = str(device_sn)
-
-            for data_item in device_data.get("dataList") or []:
-                key = data_item.get("key")
-
-                if not key:
-                    continue
-
-                name = f"{key} {device_sn}"
-                uid = f"device_{device_sn}_{key}"
-                unit = _normalize_unit(data_item.get("unit", ""))
-
-                unit_device_class = None
-                unit_state_class = None
-
-                if unit == "kWh":
-                    unit_device_class = "energy"
-                    unit_state_class = "total"
-
-                elif unit == "W":
-                    unit_device_class = "power"
-                    unit_state_class = "measurement"
-
-                elif unit == "V":
-                    unit_device_class = "voltage"
-                    unit_state_class = "measurement"
-
-                elif unit == "A":
-                    unit_device_class = "current"
-                    unit_state_class = "measurement"
-
-                elif unit == "%":
-                    unit_device_class = "battery"
-                    unit_state_class = "measurement"
-
-                elif unit == "°C":
-                    unit_device_class = "temperature"
-                    unit_state_class = "measurement"
-
-                elif unit == "Hz":
-                    unit_device_class = "frequency"
-                    unit_state_class = "measurement"
+            for metric_key, metric_name in monthly_metrics:
+                name = f"{metric_name} {station_id}"
+                uid = f"{station_id}_{metric_key}_current_month"
 
                 entities.append(
                     DeyeCloudSensor(
                         coordinator=coordinator,
-                        sensor_type="device",
+                        sensor_type="monthly_metric",
                         name=name,
                         unique_id=uid,
-                        unit=unit,
-                        device_class=unit_device_class,
-                        state_class=unit_state_class,
+                        unit="kWh",
+                        device_class="energy",
+                        state_class="total_increasing",
                         station_id=station_id,
-                        device_sn=device_sn,
-                        device_key=key,
-                        extra_attributes={
-                            "device_type": device_data.get("deviceType"),
-                            "device_state": device_data.get("deviceState"),
-                            "collection_time": device_data.get("collectionTime"),
-                        },
+                        date_key="current",
+                        metric_key=metric_key,
+                        extra_attributes={"metric": metric_name},
                     )
                 )
 
-            for description in BATTERY_PARAMETER_DESCRIPTIONS:
+                name = f"{metric_name} Last Month {station_id}"
+                uid = f"{station_id}_{metric_key}_last_month"
+
                 entities.append(
                     DeyeCloudSensor(
                         coordinator=coordinator,
-                        sensor_type="battery_parameter",
-                        name=f"{description.name} {device_sn}",
-                        unique_id=f"device_{device_sn}_{description.key}_sensor",
-                        unit=description.unit,
-                        device_class="current",
-                        state_class="measurement",
+                        sensor_type="monthly_metric",
+                        name=name,
+                        unique_id=uid,
+                        unit="kWh",
+                        device_class="energy",
+                        state_class="total",
                         station_id=station_id,
-                        device_sn=device_sn,
-                        parameter_types=description.parameter_types,
-                        extra_attributes={
-                            "source": "config/battery",
-                            "parameter_types": list(description.parameter_types),
-                        },
+                        date_key="last",
+                        metric_key=metric_key,
+                        extra_attributes={"metric": metric_name},
                     )
                 )
 
-    async_add_entities(entities)
+            for rel_key, label in _DAILY_LABELS.items():
+                for metric_key, metric_name in daily_metrics:
+                    name = f"{metric_name} {label} {station_id}"
+                    uid = f"{station_id}_{metric_key}_{rel_key}"
 
-    _LOGGER.info("DeyeCloud integration setup completed with %d sensors", len(entities))
+                    entities.append(
+                        DeyeCloudSensor(
+                            coordinator=coordinator,
+                            sensor_type="daily",
+                            name=name,
+                            unique_id=uid,
+                            unit="kWh",
+                            device_class="energy",
+                            state_class="total_increasing" if rel_key == "today" else "total",
+                            station_id=station_id,
+                            date_key=rel_key,
+                            metric_key=metric_key,
+                            extra_attributes={"relative_day": rel_key},
+                        )
+                    )
 
-    return True
+            for device_sn, device_data in station_data.get("devices", {}).items():
+                device_sn = str(device_sn)
+
+                for data_item in device_data.get("dataList") or []:
+                    key = data_item.get("key")
+
+                    if not key:
+                        continue
+
+                    name = f"{key} {device_sn}"
+                    uid = f"device_{device_sn}_{key}"
+                    unit = _normalize_unit(data_item.get("unit", ""))
+
+                    unit_device_class = None
+                    unit_state_class = None
+
+                    if unit == "kWh":
+                        unit_device_class = "energy"
+                        unit_state_class = "total"
+
+                    elif unit == "W":
+                        unit_device_class = "power"
+                        unit_state_class = "measurement"
+
+                    elif unit == "V":
+                        unit_device_class = "voltage"
+                        unit_state_class = "measurement"
+
+                    elif unit == "A":
+                        unit_device_class = "current"
+                        unit_state_class = "measurement"
+
+                    elif unit == "%":
+                        unit_device_class = (
+                            "battery" if str(key).lower() in {"soc", "batterysoc"} else None
+                        )
+                        unit_state_class = "measurement"
+
+                    elif unit == "°C":
+                        unit_device_class = "temperature"
+                        unit_state_class = "measurement"
+
+                    elif unit == "Hz":
+                        unit_device_class = "frequency"
+                        unit_state_class = "measurement"
+
+                    entities.append(
+                        DeyeCloudSensor(
+                            coordinator=coordinator,
+                            sensor_type="device",
+                            name=name,
+                            unique_id=uid,
+                            unit=unit,
+                            device_class=unit_device_class,
+                            state_class=unit_state_class,
+                            station_id=station_id,
+                            device_sn=device_sn,
+                            device_key=key,
+                            extra_attributes={
+                                "device_type": device_data.get("deviceType"),
+                                "device_state": device_data.get("deviceState"),
+                                "collection_time": device_data.get("collectionTime"),
+                            },
+                        )
+                    )
+
+                for description in BATTERY_PARAMETER_DESCRIPTIONS:
+                    entities.append(
+                        DeyeCloudSensor(
+                            coordinator=coordinator,
+                            sensor_type="battery_parameter",
+                            name=f"{description.name} {device_sn}",
+                            unique_id=f"device_{device_sn}_{description.key}_sensor",
+                            unit=description.unit,
+                            device_class="current",
+                            state_class="measurement",
+                            station_id=station_id,
+                            device_sn=device_sn,
+                            parameter_types=description.parameter_types,
+                            extra_attributes={
+                                "source": "config/battery",
+                                "parameter_types": list(description.parameter_types),
+                            },
+                        )
+                    )
+
+        fresh = [entity for entity in entities if entity.unique_id not in known]
+        known.update(entity.unique_id for entity in fresh)
+        if fresh:
+            async_add_entities(fresh)
+
+    entry.async_on_unload(coordinator.async_add_listener(discover_sensors))
+    discover_sensors()

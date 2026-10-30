@@ -10,8 +10,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import async_control_grid_charge, async_get_token
-from .button import _async_fetch_inverter_devices, _async_fetch_station_list
-from .settings import async_get_settings_coordinator
 from .auth import get_api_session
 from .const import (
     CONF_APP_ID,
@@ -22,6 +20,8 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
 )
+from .discovery import async_watch_inverters
+from .settings import async_get_settings_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,64 +42,25 @@ async def async_setup_entry(
     company_id = config.get(CONF_COMPANY_ID)
 
     session = get_api_session(hass, entry)
-    entities = []
 
-    try:
-        token = await async_get_token(
-            session,
-            username,
-            password,
-            app_id,
-            app_secret,
-            base_url,
-            company_id,
-        )
-
-        stations_data = await _async_fetch_station_list(session, token, base_url)
-        station_ids = [
-            station.get("id") or station.get("stationId")
-            for station in stations_data
-            if station.get("id") or station.get("stationId")
+    async def factory(sn):
+        coordinator = await async_get_settings_coordinator(hass, entry, sn)
+        return [
+            DeyeGridChargeSwitch(
+                hass,
+                username,
+                password,
+                app_id,
+                app_secret,
+                base_url,
+                company_id,
+                sn,
+                coordinator,
+                session,
+            )
         ]
 
-        if not station_ids:
-            _LOGGER.warning(
-                "No DeyeCloud stations found for switch setup. "
-                "If this is an installer/business account, configure company_id."
-            )
-
-        inverter_devices = await _async_fetch_inverter_devices(
-            session,
-            token,
-            base_url,
-            station_ids,
-        )
-
-        for device in inverter_devices:
-            sn = device["deviceSn"]
-            coordinator = await async_get_settings_coordinator(hass, entry, sn)
-
-            entities.append(
-                DeyeGridChargeSwitch(
-                    hass,
-                    username,
-                    password,
-                    app_id,
-                    app_secret,
-                    base_url,
-                    company_id,
-                    sn,
-                    coordinator,
-                    session,
-                )
-            )
-
-            _LOGGER.info("Created Grid Charge switch for device: %s", sn)
-
-    except Exception as exc:
-        _LOGGER.error("Error setting up Deye grid charge switches: %s", exc)
-
-    async_add_entities(entities)
+    await async_watch_inverters(hass, entry, async_add_entities, factory)
 
 
 class DeyeGridChargeSwitch(CoordinatorEntity, SwitchEntity):
@@ -134,7 +95,6 @@ class DeyeGridChargeSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_icon = "mdi:battery-charging"
         self._attr_assumed_state = False
 
-
     @property
     def device_info(self):
         """Return device information."""
@@ -156,8 +116,10 @@ class DeyeGridChargeSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def extra_state_attributes(self):
-        return {"state_source": "DeyeCloud settings readback",
-                "settings_read_at": self.coordinator.read_at}
+        return {
+            "state_source": "DeyeCloud settings readback",
+            "settings_read_at": self.coordinator.read_at,
+        }
 
     async def _async_send(self, enable: bool) -> None:
         """Send grid charge command and wait for DeyeCloud confirmation."""

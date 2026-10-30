@@ -2,8 +2,8 @@
 
 import asyncio
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import aiohttp
@@ -31,15 +31,19 @@ def response(status=200, data=None):
 
 class ControlRetryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.session = MagicMock()
+        self.session = MagicMock(spec=["post", "get"])
         self.sleep_patch = patch.object(api.asyncio, "sleep", new_callable=AsyncMock)
         self.sleep = self.sleep_patch.start()
         self.addCleanup(self.sleep_patch.stop)
 
     async def send(self, **kwargs):
         return await api.async_post_control(
-            self.session, "test-token", "https://example.invalid", "/control",
-            {"action": "on"}, **kwargs
+            self.session,
+            "test-token",
+            "https://example.invalid",
+            "/control",
+            {"action": "on"},
+            **kwargs,
         )
 
     async def test_success_without_retry(self):
@@ -57,7 +61,9 @@ class ControlRetryTests(unittest.IsolatedAsyncioTestCase):
             poll.assert_awaited_once()
         self.assertEqual(result["order_result"], {"status": "SUCCESS"})
         self.assertEqual(self.session.post.call_count, 3)
-        self.assertTrue(all(c == self.session.post.call_args for c in self.session.post.call_args_list))
+        self.assertTrue(
+            all(c == self.session.post.call_args for c in self.session.post.call_args_list)
+        )
         self.assertEqual(self.sleep.await_args_list, [call(2), call(4)])
 
     async def test_stops_after_three_server_errors(self):
@@ -109,8 +115,13 @@ class ControlRetryTests(unittest.IsolatedAsyncioTestCase):
         self.session.post.side_effect = [response(500) for _ in range(3)]
         with self.assertRaises(aiohttp.ClientResponseError):
             await api.async_update_battery_parameter(
-                self.session, "test-token", "https://example.invalid", "test-device",
-                "GRID_CHARGE_AMPERE", 190, wait_for_result=False,
+                self.session,
+                "test-token",
+                "https://example.invalid",
+                "test-device",
+                "GRID_CHARGE_AMPERE",
+                190,
+                wait_for_result=False,
             )
         calls = self.session.post.call_args_list
         self.assertEqual(len(calls), 3)

@@ -1,10 +1,10 @@
 """Readback decoding and entity behavior without a running Home Assistant."""
 
 import importlib.util
-from pathlib import Path
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components/deyecloud"
@@ -30,15 +30,26 @@ values = load("settings_values")
 
 class DecodeTests(unittest.TestCase):
     def test_documented_battery_fields_and_zero(self):
-        self.assertEqual(values.decode_settings(
-            {"success": True, "maxChargeCurrent": 190, "maxDischargeCurrent": 0}, {}
-        ), {"max_battery_charge_current": 190, "max_battery_discharge_current": 0})
+        self.assertEqual(
+            values.decode_settings(
+                {"success": True, "maxChargeCurrent": 190, "maxDischargeCurrent": 0}, {}
+            ),
+            {"max_battery_charge_current": 190, "max_battery_discharge_current": 0},
+        )
 
     def test_dynamic_read_json_and_supported_layout(self):
-        self.assertEqual(values.decode_settings({}, {"analysisResult":
-            '{"00F4":2,"00F8":1,"00E8":0,"00E6":190,"00D2":190,"00D3":0}'}),
-            {"grid_charge": False, "grid_charge_current": 190,
-             "max_battery_charge_current": 190, "max_battery_discharge_current": 0})
+        self.assertEqual(
+            values.decode_settings(
+                {},
+                {"analysisResult": '{"00F4":2,"00F8":1,"00E8":0,"00E6":190,"00D2":190,"00D3":0}'},
+            ),
+            {
+                "grid_charge": False,
+                "grid_charge_current": 190,
+                "max_battery_charge_current": 190,
+                "max_battery_discharge_current": 0,
+            },
+        )
 
     def test_unknown_layout_does_not_guess(self):
         self.assertEqual(values.decode_settings({}, {"analysisResult": {"00E8": 1}}), {})
@@ -46,14 +57,18 @@ class DecodeTests(unittest.TestCase):
     def test_invalid_data_does_not_become_off_or_zero(self):
         for raw in (None, "garbage", [], '{"raw":"unrecognised"}'):
             self.assertEqual(values.decode_settings({}, {"analysisResult": raw}), {})
-        self.assertEqual(values.decode_settings({}, {"analysisResult": {
-            "00F4": 2, "00F8": 1, "00E8": 2, "00E6": "NaN", "00D2": -1
-        }}), {})
+        self.assertEqual(
+            values.decode_settings(
+                {}, {"analysisResult": {"00F4": 2, "00F8": 1, "00E8": 2, "00E6": "NaN", "00D2": -1}}
+            ),
+            {},
+        )
 
     def test_decoded_endpoint_takes_precedence(self):
-        result = values.decode_settings({"maxChargeCurrent": 100}, {"analysisResult": {
-            "00F4": 2, "00F8": 1, "00D2": 190, "00E8": 1
-        }})
+        result = values.decode_settings(
+            {"maxChargeCurrent": 100},
+            {"analysisResult": {"00F4": 2, "00F8": 1, "00D2": 190, "00E8": 1}},
+        )
         self.assertEqual(result["max_battery_charge_current"], 100)
         self.assertIs(result["grid_charge"], True)
 
@@ -93,11 +108,15 @@ def load_platforms():
         "homeassistant.components.number": {"NumberEntity": Entity},
         "homeassistant.config_entries": {"ConfigEntry": object},
         "homeassistant.core": {"HomeAssistant": object},
-        "homeassistant.exceptions": {"HomeAssistantError": RuntimeError},
+        "homeassistant.exceptions": {
+            "HomeAssistantError": RuntimeError,
+            "ConfigEntryAuthFailed": type("ConfigEntryAuthFailed", (Exception,), {}),
+        },
         "homeassistant.helpers.aiohttp_client": {"async_get_clientsession": lambda hass: object()},
         "homeassistant.helpers.entity_platform": {"AddEntitiesCallback": object},
         "homeassistant.helpers.update_coordinator": {
-            "CoordinatorEntity": CoordinatorEntity, "DataUpdateCoordinator": DataUpdateCoordinator,
+            "CoordinatorEntity": CoordinatorEntity,
+            "DataUpdateCoordinator": DataUpdateCoordinator,
             "UpdateFailed": RuntimeError,
         },
     }
@@ -118,18 +137,32 @@ settings, switches, numbers = load_platforms()
 
 class ReadbackTests(unittest.IsolatedAsyncioTestCase):
     def coordinator(self):
-        entry = MagicMock(data={
-            "username": "user", "password": "pass", "app_id": "id",
-            "app_secret": "secret", "base_url": "https://example.invalid",
-        })
+        entry = MagicMock(
+            data={
+                "username": "user",
+                "password": "pass",
+                "app_id": "id",
+                "app_secret": "secret",
+                "base_url": "https://example.invalid",
+            }
+        )
         return settings.DeyeSettingsCoordinator(MagicMock(), entry, "device")
 
     async def test_partial_read_drops_missing_settings(self):
         coordinator = self.coordinator()
         coordinator.data = {"grid_charge": True, "grid_charge_current": 190}
-        with patch.object(settings, "get_api_session", return_value=object()), patch.object(settings, "async_get_token", AsyncMock(return_value="token")), \
-             patch.object(settings, "async_get_battery_config", AsyncMock(return_value={"maxChargeCurrent": 100})), \
-             patch.object(settings, "async_post_control", AsyncMock(side_effect=RuntimeError("offline"))):
+        with (
+            patch.object(settings, "get_api_session", return_value=object()),
+            patch.object(settings, "async_get_token", AsyncMock(return_value="token")),
+            patch.object(
+                settings,
+                "async_get_battery_config",
+                AsyncMock(return_value={"maxChargeCurrent": 100}),
+            ),
+            patch.object(
+                settings, "async_post_control", AsyncMock(side_effect=RuntimeError("offline"))
+            ),
+        ):
             await coordinator.async_refresh()
         self.assertEqual(coordinator.data, {"max_battery_charge_current": 100})
         self.assertTrue(coordinator.last_update_success)
@@ -138,17 +171,30 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_total_read_failure_makes_entities_unavailable(self):
         coordinator = self.coordinator()
         coordinator.data = {"grid_charge": True}
-        with patch.object(settings, "get_api_session", return_value=object()), patch.object(settings, "async_get_token", AsyncMock(side_effect=RuntimeError("offline"))):
+        with (
+            patch.object(settings, "get_api_session", return_value=object()),
+            patch.object(
+                settings, "async_get_token", AsyncMock(side_effect=RuntimeError("offline"))
+            ),
+        ):
             await coordinator.async_refresh()
-        switch = switches.DeyeGridChargeSwitch(MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator, object())
+        switch = switches.DeyeGridChargeSwitch(
+            MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator, object()
+        )
         self.assertFalse(switch.available)
 
     async def test_switch_does_not_echo_requested_value(self):
         coordinator = MagicMock(data={"grid_charge": False}, last_update_success=True)
         coordinator.async_refresh = AsyncMock()
-        switch = switches.DeyeGridChargeSwitch(MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator, object())
-        with patch.object(switches, "async_get_token", AsyncMock(return_value="token")), \
-             patch.object(switches, "async_control_grid_charge", AsyncMock(return_value={"success": True})):
+        switch = switches.DeyeGridChargeSwitch(
+            MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator, object()
+        )
+        with (
+            patch.object(switches, "async_get_token", AsyncMock(return_value="token")),
+            patch.object(
+                switches, "async_control_grid_charge", AsyncMock(return_value={"success": True})
+            ),
+        ):
             await switch.async_turn_on()
         self.assertIs(switch.is_on, False)
         coordinator.async_refresh.assert_awaited_once()
@@ -161,11 +207,24 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         coordinator = MagicMock(data={"grid_charge_current": 0}, last_update_success=True)
         coordinator.async_refresh = AsyncMock()
         number = numbers.DeyeBatteryCurrentNumber(
-            MagicMock(), "u", "p", "a", "s", "url", None, "sn",
-            numbers.NUMBER_DESCRIPTIONS[2], coordinator, object(),
+            MagicMock(),
+            "u",
+            "p",
+            "a",
+            "s",
+            "url",
+            None,
+            "sn",
+            numbers.NUMBER_DESCRIPTIONS[2],
+            coordinator,
+            object(),
         )
-        with patch.object(numbers, "async_get_token", AsyncMock(return_value="token")), \
-             patch.object(numbers, "async_update_battery_parameter", AsyncMock(return_value={"success": True})):
+        with (
+            patch.object(numbers, "async_get_token", AsyncMock(return_value="token")),
+            patch.object(
+                numbers, "async_update_battery_parameter", AsyncMock(return_value={"success": True})
+            ),
+        ):
             await number.async_set_native_value(190)
         self.assertEqual(number.native_value, 0)
         coordinator.async_refresh.assert_awaited_once()
@@ -177,7 +236,9 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_device_settings_coordinator_is_shared(self):
         hass = MagicMock(data={})
         entry = MagicMock(entry_id="entry", data={})
-        with patch.object(settings.DeyeSettingsCoordinator, "async_refresh", AsyncMock()) as refresh:
+        with patch.object(
+            settings.DeyeSettingsCoordinator, "async_refresh", AsyncMock()
+        ) as refresh:
             first = await settings.async_get_settings_coordinator(hass, entry, "sn")
             second = await settings.async_get_settings_coordinator(hass, entry, "sn")
         self.assertIs(first, second)

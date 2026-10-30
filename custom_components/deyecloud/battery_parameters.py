@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
-
 
 MAX_CHARGE_CURRENT = "MAX_CHARGE_CURRENT"
 MAX_DISCHARGE_CURRENT = "MAX_DISCHARGE_CURRENT"
@@ -117,7 +117,7 @@ def _to_number(value: Any) -> float | int | None:
         return None
 
     if isinstance(value, (int, float)):
-        return value
+        return value if math.isfinite(value) else None
 
     text = str(value).strip()
     if not text:
@@ -129,6 +129,9 @@ def _to_number(value: Any) -> float | int | None:
     try:
         as_float = float(text)
     except ValueError:
+        return None
+
+    if not math.isfinite(as_float):
         return None
 
     if as_float.is_integer():

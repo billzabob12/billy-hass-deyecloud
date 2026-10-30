@@ -1,6 +1,7 @@
 """DeyeCloud number entities."""
 
 import logging
+import math
 from dataclasses import dataclass
 
 from homeassistant.components.number import NumberEntity
@@ -11,8 +12,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import async_get_token, async_update_battery_parameter
-from .button import _async_fetch_inverter_devices, _async_fetch_station_list
-from .settings import async_get_settings_coordinator
 from .auth import get_api_session
 from .const import (
     CONF_APP_ID,
@@ -23,6 +22,8 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
 )
+from .discovery import async_watch_inverters
+from .settings import async_get_settings_coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,66 +92,27 @@ async def async_setup_entry(
     company_id = config.get(CONF_COMPANY_ID)
 
     session = get_api_session(hass, entry)
-    entities = []
 
-    try:
-        token = await async_get_token(
-            session,
-            username,
-            password,
-            app_id,
-            app_secret,
-            base_url,
-            company_id,
-        )
-
-        stations_data = await _async_fetch_station_list(session, token, base_url)
-        station_ids = [
-            station.get("id") or station.get("stationId")
-            for station in stations_data
-            if station.get("id") or station.get("stationId")
+    async def factory(sn):
+        coordinator = await async_get_settings_coordinator(hass, entry, sn)
+        return [
+            DeyeBatteryCurrentNumber(
+                hass,
+                username,
+                password,
+                app_id,
+                app_secret,
+                base_url,
+                company_id,
+                sn,
+                description,
+                coordinator,
+                session,
+            )
+            for description in NUMBER_DESCRIPTIONS
         ]
 
-        if not station_ids:
-            _LOGGER.warning(
-                "No DeyeCloud stations found for number setup. "
-                "If this is an installer/business account, configure company_id."
-            )
-
-        inverter_devices = await _async_fetch_inverter_devices(
-            session,
-            token,
-            base_url,
-            station_ids,
-        )
-
-        for device in inverter_devices:
-            sn = device["deviceSn"]
-            coordinator = await async_get_settings_coordinator(hass, entry, sn)
-
-            for description in NUMBER_DESCRIPTIONS:
-                entities.append(
-                    DeyeBatteryCurrentNumber(
-                        hass,
-                        username,
-                        password,
-                        app_id,
-                        app_secret,
-                        base_url,
-                        company_id,
-                        sn,
-                        description,
-                        coordinator,
-                        session,
-                    )
-                )
-
-            _LOGGER.info("Created battery/grid current number entities for device: %s", sn)
-
-    except Exception as exc:
-        _LOGGER.error("Error setting up Deye battery/grid current numbers: %s", exc)
-
-    async_add_entities(entities)
+    await async_watch_inverters(hass, entry, async_add_entities, factory)
 
 
 class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
@@ -202,8 +164,10 @@ class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
 
     @property
     def extra_state_attributes(self):
-        return {"state_source": "DeyeCloud settings readback",
-                "settings_read_at": self.coordinator.read_at}
+        return {
+            "state_source": "DeyeCloud settings readback",
+            "settings_read_at": self.coordinator.read_at,
+        }
 
     @property
     def device_info(self):
@@ -217,6 +181,11 @@ class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set Deye battery/grid current value and wait for confirmation."""
+        if (
+            not math.isfinite(value)
+            or not self._description.min_value <= value <= self._description.max_value
+        ):
+            raise HomeAssistantError("Current is outside the supported range")
         session = self._session
         last_exc = None
 
@@ -269,6 +238,5 @@ class DeyeBatteryCurrentNumber(CoordinatorEntity, NumberEntity):
 
         except Exception as exc:
             raise HomeAssistantError(
-                f"Failed to set {self._description.name} to {value}A "
-                f"for {self._device_sn}: {exc}"
+                f"Failed to set {self._description.name} to {value}A for {self._device_sn}: {exc}"
             ) from exc

@@ -19,76 +19,9 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
 )
+from .discovery import async_watch_inverters
 
 _LOGGER = logging.getLogger(__name__)
-
-
-async def _async_fetch_station_list(session, token, base_url):
-    """Fetch station list from DeyeCloud."""
-    station_url = f"{base_url}/station/list"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    async with session.post(station_url, headers=headers, json={}, timeout=10) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
-
-    if not data.get("success", True):
-        raise HomeAssistantError(f"Station list request failed: {data.get('msg')}")
-
-    return data.get("stationList") or []
-
-
-async def _async_fetch_inverter_devices(session, token, base_url, station_ids):
-    """Fetch inverter devices with pagination."""
-    if not station_ids:
-        return []
-
-    device_url = f"{base_url}/station/device"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    devices = []
-    page = 1
-    size = 100
-
-    while True:
-        payload = {
-            "page": page,
-            "size": size,
-            "stationIds": station_ids,
-        }
-
-        async with session.post(
-            device_url,
-            headers=headers,
-            json=payload,
-            timeout=10,
-        ) as resp:
-            resp.raise_for_status()
-            device_response = await resp.json()
-
-        if not device_response.get("success", True):
-            raise HomeAssistantError(
-                f"Device list request failed: {device_response.get('msg')}"
-            )
-
-        page_items = device_response.get("deviceListItems") or []
-        devices.extend(page_items)
-
-        total = device_response.get("total") or device_response.get("totalCount")
-
-        if total is not None and len(devices) >= int(total):
-            break
-
-        if len(page_items) < size:
-            break
-
-        page += 1
-
-    return [
-        device
-        for device in devices
-        if device.get("deviceType") == "INVERTER" and device.get("deviceSn")
-    ]
 
 
 async def async_setup_entry(
@@ -107,82 +40,40 @@ async def async_setup_entry(
     company_id = config.get(CONF_COMPANY_ID)
 
     session = get_api_session(hass, entry)
-    entities = []
 
-    try:
-        token = await async_get_token(
-            session,
-            username,
-            password,
-            app_id,
-            app_secret,
-            base_url,
-            company_id,
-        )
-
-        stations_data = await _async_fetch_station_list(session, token, base_url)
-        station_ids = [
-            station.get("id") or station.get("stationId")
-            for station in stations_data
-            if station.get("id") or station.get("stationId")
+    async def factory(sn):
+        return [
+            DeyeSolarSellButton(
+                hass,
+                username,
+                password,
+                app_id,
+                app_secret,
+                base_url,
+                company_id,
+                sn,
+                "Enable",
+                True,
+                "mdi:solar-power",
+                session,
+            ),
+            DeyeSolarSellButton(
+                hass,
+                username,
+                password,
+                app_id,
+                app_secret,
+                base_url,
+                company_id,
+                sn,
+                "Disable",
+                False,
+                "mdi:solar-power-variant-outline",
+                session,
+            ),
         ]
 
-        if not station_ids:
-            _LOGGER.warning(
-                "No DeyeCloud stations found for button setup. "
-                "If this is an installer/business account, configure company_id."
-            )
-
-        inverter_devices = await _async_fetch_inverter_devices(
-            session,
-            token,
-            base_url,
-            station_ids,
-        )
-
-        for device in inverter_devices:
-            sn = device["deviceSn"]
-
-            entities.append(
-                DeyeSolarSellButton(
-                    hass,
-                    username,
-                    password,
-                    app_id,
-                    app_secret,
-                    base_url,
-                    company_id,
-                    sn,
-                    "Enable",
-                    True,
-                    "mdi:solar-power",
-                    session,
-                )
-            )
-
-            entities.append(
-                DeyeSolarSellButton(
-                    hass,
-                    username,
-                    password,
-                    app_id,
-                    app_secret,
-                    base_url,
-                    company_id,
-                    sn,
-                    "Disable",
-                    False,
-                    "mdi:solar-power-variant-outline",
-                    session,
-                )
-            )
-
-            _LOGGER.info("Created Solar Sell buttons for device: %s", sn)
-
-    except Exception as exc:
-        _LOGGER.error("Error setting up Deye buttons: %s", exc)
-
-    async_add_entities(entities)
+    await async_watch_inverters(hass, entry, async_add_entities, factory)
 
 
 class DeyeSolarSellButton(ButtonEntity):

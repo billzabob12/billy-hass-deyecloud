@@ -7,10 +7,10 @@ import ast
 import asyncio
 import hashlib
 import importlib
-from pathlib import Path
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -22,8 +22,14 @@ sys.modules[package.__name__] = package
 api = importlib.import_module("deye_auth_tests.api")
 auth = importlib.import_module("deye_auth_tests.auth")
 BASE = "https://eu1-developer.deyecloud.com/v1.0"
-CONFIG = dict(username="user", password=" password ", app_id="app",
-              app_secret="secret", base_url=BASE, company_id="42")
+CONFIG = dict(
+    username="user",
+    password=" password ",
+    app_id="app",
+    app_secret="secret",
+    base_url=BASE,
+    company_id="42",
+)
 
 
 class Response:
@@ -83,10 +89,15 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         await session.async_get_token()
         url, kwargs = transport.logins[0]
         self.assertEqual(url, BASE + "/account/token?appId=app")
-        self.assertEqual(kwargs["json"], {
-            "email": "user@example.com", "password": hashlib.sha256(b" password ").hexdigest(),
-            "appSecret": "secret", "companyId": "42",
-        })
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "email": "user@example.com",
+                "password": hashlib.sha256(b" password ").hexdigest(),
+                "appSecret": "secret",
+                "companyId": "42",
+            },
+        )
         self.assertFalse(kwargs["allow_redirects"])
 
     async def test_rejected_token_is_renewed_once(self):
@@ -96,13 +107,15 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             async with session.post(BASE + "/station/list", json={}) as response:
                 self.assertEqual(response.status, 200)
             self.assertEqual(len(transport.logins), 2)
-            self.assertEqual([c[2]["headers"]["Authorization"] for c in transport.calls],
-                             ["Bearer token1", "Bearer token2"])
+            self.assertEqual(
+                [c[2]["headers"]["Authorization"] for c in transport.calls],
+                ["Bearer token1", "Bearer token2"],
+            )
 
     async def test_persistent_rejection_is_bounded(self):
         transport = Transport([Response(401), Response(401)])
         session = auth.DeyeCloudSession(transport, CONFIG)
-        with self.assertRaises(aiohttp.ClientResponseError):
+        with self.assertRaises(api.DeyeCloudAuthError):
             async with session.get(BASE + "/order/123") as response:
                 response.raise_for_status()
         self.assertEqual(len(transport.calls), 2)
@@ -117,20 +130,24 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_network_timeout_does_not_replay_command(self):
         transport = Transport()
         session = auth.DeyeCloudSession(transport, CONFIG)
+
         def timeout(*args, **kwargs):
             transport.calls.append((args, kwargs))
             raise asyncio.TimeoutError
+
         transport.request = timeout
         with self.assertRaises(asyncio.TimeoutError):
             await api.async_control_grid_charge(session, "stale", BASE, "sn", True)
         self.assertEqual(len(transport.calls), 1)
 
     async def test_order_poll_renews_rejected_token(self):
-        transport = Transport([
-            Response(data={"success": True, "orderId": "123"}),
-            Response(401),
-            Response(data={"success": True, "status": "SUCCESS"}),
-        ])
+        transport = Transport(
+            [
+                Response(data={"success": True, "orderId": "123"}),
+                Response(401),
+                Response(data={"success": True, "status": "SUCCESS"}),
+            ]
+        )
         session = auth.DeyeCloudSession(transport, CONFIG)
         result = await api.async_control_grid_charge(session, "stale", BASE, "sn", True)
         self.assertEqual(result["order_result"]["status"], "SUCCESS")
@@ -180,25 +197,35 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(api, "async_post_control", new_callable=AsyncMock) as send:
             send.side_effect = api.DeyeCloudOrderTimeout("uncertain")
             with self.assertRaises(api.DeyeCloudOrderTimeout):
-                await api.async_update_battery_parameter(None, "token", BASE, "sn", "MAX_CHARGE_CURRENT", 10)
+                await api.async_update_battery_parameter(
+                    None, "token", BASE, "sn", "MAX_CHARGE_CURRENT", 10
+                )
             self.assertEqual(send.await_count, 1)
 
 
 class InputTests(unittest.TestCase):
     def test_only_documented_https_hosts_are_accepted(self):
         self.assertEqual(auth.normalize_base_url(BASE + "/"), BASE)
-        for value in (BASE.replace("https:", "http:"), BASE + "?x=1", BASE + "#x",
-                      BASE.replace(".com", ".com.evil.test"),
-                      BASE.replace("https://", "https://user@"),
-                      BASE.replace(".com", ".com:443"), "https://example.com/v1.0"):
+        for value in (
+            BASE.replace("https:", "http:"),
+            BASE + "?x=1",
+            BASE + "#x",
+            BASE.replace(".com", ".com.evil.test"),
+            BASE.replace("https://", "https://user@"),
+            BASE.replace(".com", ".com:443"),
+            "https://example.com/v1.0",
+        ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 auth.normalize_base_url(value)
 
     def test_normalization_preserves_secret_whitespace(self):
         # Isolate the pure normalization function from HA's UI dependencies.
         tree = ast.parse((ROOT / "config_flow.py").read_text())
-        fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                  and node.name == "_normalize_user_input")
+        fn = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_normalize_user_input"
+        )
         const = importlib.import_module("deye_auth_tests.const")
         scope = {**vars(const), "Any": object, "normalize_base_url": auth.normalize_base_url}
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "config_flow.py", "exec"), scope)

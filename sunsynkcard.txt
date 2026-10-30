@@ -1,3 +1,6 @@
+# Example only: install the custom Sunsynk card separately.
+# Replace your_inverter_serialnumber and verify entity IDs in Developer Tools.
+# Controls/status entities from other Sunsynk integrations are omitted.
 type: custom:sunsynk-power-flow-card
 cardstyle: lite
 show_solar: true
@@ -15,14 +18,10 @@ grid:
   show_daily_sell: true
   show_nonessential: true
 entities:
-  use_timer_248: switch.sunsynk_toggle_system_timer
-  priority_load_243: switch.sunsynk_toggle_priority_load
   inverter_voltage_154: sensor.gridvoltagel1l2_your_inverter_serialnumber
   load_frequency_192: sensor.gridfrequency_your_inverter_serialnumber
   inverter_current_164: sensor.gridcurrentl1l2_your_inverter_serialnumber
   inverter_power_175: sensor.inverteroutputpowerl1l2_your_inverter_serialnumber
-  grid_connected_status_194: binary_sensor.sunsynk_grid_connected_status
-  inverter_status_59: sensor.sunsynk_overall_state
   day_battery_charge_70: sensor.dailychargingenergy_your_inverter_serialnumber
   day_battery_discharge_71: sensor.dailydischargingenergy_your_inverter_serialnumber
   battery_voltage_183: sensor.batteryvoltage_your_inverter_serialnumber
@@ -36,7 +35,6 @@ entities:
   day_load_energy_84: sensor.dailyconsumption_your_inverter_serialnumber
   essential_power: none
   nonessential_power: none
-  aux_power_166: sensor.sunsynk_aux_power
   day_pv_energy_108: sensor.dailyactiveproduction_your_inverter_serialnumber
   pv1_power_186: sensor.dcpowerpv1_your_inverter_serialnumber
   pv2_power_187: sensor.dcpowerpv2_your_inverter_serialnumber

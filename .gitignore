@@ -3,3 +3,6 @@ __pycache__/
 deve_history.json
 .vscode/
 .idea/
+.pytest_cache/
+.ruff_cache/
+pytest-cache-files-*/

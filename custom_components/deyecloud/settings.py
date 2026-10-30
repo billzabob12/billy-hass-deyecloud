@@ -1,16 +1,22 @@
 """Shared per-inverter DeyeCloud settings readback."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
 import logging
+from datetime import datetime, timedelta, timezone
 
-from .auth import get_api_session
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import async_get_battery_config, async_get_token, async_post_control
+from .api import DeyeCloudAuthError, async_get_battery_config, async_get_token, async_post_control
+from .auth import get_api_session
 from .const import (
-    CONF_APP_ID, CONF_APP_SECRET, CONF_BASE_URL, CONF_COMPANY_ID,
-    CONF_PASSWORD, CONF_USERNAME, DOMAIN,
+    CONF_APP_ID,
+    CONF_APP_SECRET,
+    CONF_BASE_URL,
+    CONF_COMPANY_ID,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
 )
 from .settings_values import decode_settings
 
@@ -21,12 +27,18 @@ class DeyeSettingsCoordinator(DataUpdateCoordinator):
     """Read settings once per inverter for all its control entities."""
 
     def __init__(self, hass, entry, device_sn):
-        super().__init__(hass, _LOGGER, name=f"Deye settings {device_sn}",
-                         update_interval=timedelta(minutes=5))
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"Deye settings {device_sn}",
+            update_interval=timedelta(minutes=5),
+        )
         self.entry = entry
         self.device_sn = device_sn
         self._token = None
         self.read_at = None
+        self.battery_config = {}
         self.setup_lock = asyncio.Lock()
         self.initialized = False
 
@@ -35,33 +47,49 @@ class DeyeSettingsCoordinator(DataUpdateCoordinator):
         session = get_api_session(self.hass, self.entry)
         try:
             self._token = await async_get_token(
-                session, config[CONF_USERNAME], config[CONF_PASSWORD],
-                config[CONF_APP_ID], config[CONF_APP_SECRET],
-                config[CONF_BASE_URL], config.get(CONF_COMPANY_ID),
+                session,
+                config[CONF_USERNAME],
+                config[CONF_PASSWORD],
+                config[CONF_APP_ID],
+                config[CONF_APP_SECRET],
+                config[CONF_BASE_URL],
+                config.get(CONF_COMPANY_ID),
             )
             battery, dynamic = await asyncio.gather(
                 async_get_battery_config(
                     session, self._token, config[CONF_BASE_URL], self.device_sn
                 ),
                 async_post_control(
-                    session, self._token, config[CONF_BASE_URL],
-                    "/strategy/dynamicControl/read", {"deviceSn": self.device_sn},
+                    session,
+                    self._token,
+                    config[CONF_BASE_URL],
+                    "/strategy/dynamicControl/read",
+                    {"deviceSn": self.device_sn},
                 ),
                 return_exceptions=True,
             )
+            for result in (battery, dynamic):
+                if isinstance(result, DeyeCloudAuthError):
+                    raise ConfigEntryAuthFailed("DeyeCloud credentials were rejected") from result
             if isinstance(battery, Exception):
                 _LOGGER.debug("Battery settings read failed for %s: %s", self.device_sn, battery)
                 battery = {}
             if isinstance(dynamic, Exception):
                 _LOGGER.debug("Dynamic settings read failed for %s: %s", self.device_sn, dynamic)
                 dynamic = {}
+            self.battery_config = battery
             settings = decode_settings(battery, dynamic.get("order_result") or {})
             if not settings:
                 raise UpdateFailed("DeyeCloud returned no supported settings readback")
             self.read_at = datetime.now(timezone.utc).isoformat()
             return settings
+        except DeyeCloudAuthError as exc:
+            raise ConfigEntryAuthFailed("DeyeCloud credentials were rejected") from exc
+        except ConfigEntryAuthFailed:
+            raise
         except Exception as exc:
-            # Reauthenticate next cycle after any failure; never infer values.
+            self.battery_config = {}
+            # Retry readback next cycle; never infer settings from commands.
             self._token = None
             raise UpdateFailed(f"DeyeCloud settings read failed: {exc}") from exc
 
