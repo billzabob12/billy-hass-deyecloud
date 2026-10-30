@@ -10,12 +10,15 @@
           "app_id": "App ID",
           "app_secret": "App Secret",
           "base_url": "Base URL",
-          "start_month": "Tháng bắt đầu"
+          "start_month": "Tháng bắt đầu",
+          "company_id": "Company ID (không bắt buộc)"
         }
       }
     },
     "error": {
-      "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL."
+      "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL.",
+      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
+      "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID."
     }
   },
   "options": {
@@ -29,12 +32,15 @@
           "app_id": "App ID",
           "app_secret": "App Secret",
           "base_url": "Base URL",
-          "start_month": "Tháng bắt đầu"
+          "start_month": "Tháng bắt đầu",
+          "company_id": "Company ID (không bắt buộc)"
         }
       }
     },
     "error": {
-      "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL."
+      "auth_failed": "Xác thực thất bại. Vui lòng kiểm tra tên đăng nhập/email, mật khẩu, App ID, App Secret và Base URL.",
+      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
+      "no_stations_found": "Không tìm thấy trạm được cấp quyền. Kiểm tra quyền truy cập trạm và Company ID."
     }
   }
 }

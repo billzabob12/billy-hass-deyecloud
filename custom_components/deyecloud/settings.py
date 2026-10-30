@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from .auth import get_api_session
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import async_get_battery_config, async_get_token, async_post_control
@@ -26,23 +26,19 @@ class DeyeSettingsCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self.device_sn = device_sn
         self._token = None
-        self._token_expiry = datetime.min.replace(tzinfo=timezone.utc)
         self.read_at = None
         self.setup_lock = asyncio.Lock()
         self.initialized = False
 
     async def _async_update_data(self):
         config = self.entry.data
-        session = async_get_clientsession(self.hass)
-        now = datetime.now(timezone.utc)
+        session = get_api_session(self.hass, self.entry)
         try:
-            if not self._token or now >= self._token_expiry:
-                self._token = await async_get_token(
-                    session, config[CONF_USERNAME], config[CONF_PASSWORD],
-                    config[CONF_APP_ID], config[CONF_APP_SECRET],
-                    config[CONF_BASE_URL], config.get(CONF_COMPANY_ID),
-                )
-                self._token_expiry = now + timedelta(minutes=25)
+            self._token = await async_get_token(
+                session, config[CONF_USERNAME], config[CONF_PASSWORD],
+                config[CONF_APP_ID], config[CONF_APP_SECRET],
+                config[CONF_BASE_URL], config.get(CONF_COMPANY_ID),
+            )
             battery, dynamic = await asyncio.gather(
                 async_get_battery_config(
                     session, self._token, config[CONF_BASE_URL], self.device_sn

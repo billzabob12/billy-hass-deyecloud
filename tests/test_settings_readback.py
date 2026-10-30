@@ -127,7 +127,7 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_partial_read_drops_missing_settings(self):
         coordinator = self.coordinator()
         coordinator.data = {"grid_charge": True, "grid_charge_current": 190}
-        with patch.object(settings, "async_get_token", AsyncMock(return_value="token")), \
+        with patch.object(settings, "get_api_session", return_value=object()), patch.object(settings, "async_get_token", AsyncMock(return_value="token")), \
              patch.object(settings, "async_get_battery_config", AsyncMock(return_value={"maxChargeCurrent": 100})), \
              patch.object(settings, "async_post_control", AsyncMock(side_effect=RuntimeError("offline"))):
             await coordinator.async_refresh()
@@ -138,15 +138,15 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_total_read_failure_makes_entities_unavailable(self):
         coordinator = self.coordinator()
         coordinator.data = {"grid_charge": True}
-        with patch.object(settings, "async_get_token", AsyncMock(side_effect=RuntimeError("offline"))):
+        with patch.object(settings, "get_api_session", return_value=object()), patch.object(settings, "async_get_token", AsyncMock(side_effect=RuntimeError("offline"))):
             await coordinator.async_refresh()
-        switch = switches.DeyeGridChargeSwitch(MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator)
+        switch = switches.DeyeGridChargeSwitch(MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator, object())
         self.assertFalse(switch.available)
 
     async def test_switch_does_not_echo_requested_value(self):
         coordinator = MagicMock(data={"grid_charge": False}, last_update_success=True)
         coordinator.async_refresh = AsyncMock()
-        switch = switches.DeyeGridChargeSwitch(MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator)
+        switch = switches.DeyeGridChargeSwitch(MagicMock(), "u", "p", "a", "s", "url", None, "sn", coordinator, object())
         with patch.object(switches, "async_get_token", AsyncMock(return_value="token")), \
              patch.object(switches, "async_control_grid_charge", AsyncMock(return_value={"success": True})):
             await switch.async_turn_on()
@@ -162,7 +162,7 @@ class ReadbackTests(unittest.IsolatedAsyncioTestCase):
         coordinator.async_refresh = AsyncMock()
         number = numbers.DeyeBatteryCurrentNumber(
             MagicMock(), "u", "p", "a", "s", "url", None, "sn",
-            numbers.NUMBER_DESCRIPTIONS[2], coordinator,
+            numbers.NUMBER_DESCRIPTIONS[2], coordinator, object(),
         )
         with patch.object(numbers, "async_get_token", AsyncMock(return_value="token")), \
              patch.object(numbers, "async_update_battery_parameter", AsyncMock(return_value={"success": True})):

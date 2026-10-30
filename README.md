@@ -78,6 +78,42 @@ Depending on your region:
 | App Secret  | From developer portal |
 | Base URL    | Based on your region |
 | Start Month | First month to fetch history from (e.g. `2024-01`) |
+| Company ID | Optional company context for installer/business accounts |
+
+### Authentication and credential storage
+
+The integration exchanges your username/email, SHA-256 password digest, App ID,
+App Secret, and optional Company ID for a DeyeCloud bearer token. It accepts only
+the EU and US HTTPS API URLs listed above; redirects are disabled. Passwords and
+App Secrets are preserved exactly, including leading and trailing whitespace.
+
+Home Assistant stores the original credentials in the integration's config entry
+so it can obtain new tokens. This integration does not add encryption to those
+stored values. Protect your Home Assistant configuration and backups accordingly.
+The password digest is produced for the token request; it does not replace the
+stored password. Password and App Secret fields use masked input controls.
+
+All platforms in a config entry share one in-memory token cache. Concurrent
+requests share token acquisition, and tokens are renewed after a conservative
+25-minute local lifetime. An HTTP 401 or 403 triggers one renewal and one retry;
+The existing bounded HTTP 500 submission retry is retained for explicit-value
+commands. Other command failures and uncertain order results do not automatically
+resubmit the command. JSON-level errors are surfaced without guessing which vendor error
+codes mean token expiry. Tokens are not saved across integration reloads.
+
+Use **Settings → Devices & Services → DeyeCloud → Configure** to update
+credentials. Updates are validated and reload the integration.
+
+### Development checks
+
+With Python 3.12+ and `aiohttp` installed, run:
+
+```sh
+python -m unittest discover -s tests -v
+python -m compileall -q custom_components
+```
+
+The regression tests fake the HTTP boundary and do not issue inverter commands.
 
 ---
 

@@ -10,12 +10,15 @@
           "app_id": "App ID",
           "app_secret": "App Secret",
           "base_url": "Base URL",
-          "start_month": "Start month"
+          "start_month": "Start month",
+          "company_id": "Company ID (optional)"
         }
       }
     },
     "error": {
-      "auth_failed": "Authentication failed. Please check your username/email, password, App ID, App Secret, and Base URL."
+      "auth_failed": "Authentication failed. Please check your username/email, password, App ID, App Secret, and Base URL.",
+      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
+      "no_stations_found": "No accessible stations found. Check station authorization and Company ID."
     }
   },
   "options": {
@@ -29,12 +32,15 @@
           "app_id": "App ID",
           "app_secret": "App Secret",
           "base_url": "Base URL",
-          "start_month": "Start month"
+          "start_month": "Start month",
+          "company_id": "Company ID (optional)"
         }
       }
     },
     "error": {
-      "auth_failed": "Authentication failed. Please check your username/email, password, App ID, App Secret, and Base URL."
+      "auth_failed": "Authentication failed. Please check your username/email, password, App ID, App Secret, and Base URL.",
+      "invalid_base_url": "Use https://eu1-developer.deyecloud.com/v1.0 or https://us1-developer.deyecloud.com/v1.0.",
+      "no_stations_found": "No accessible stations found. Check station authorization and Company ID."
     }
   }
 }

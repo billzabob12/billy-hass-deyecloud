@@ -6,10 +6,10 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import async_control_solar_sell, async_get_token
+from .auth import get_api_session
 from .const import (
     CONF_APP_ID,
     CONF_APP_SECRET,
@@ -106,7 +106,7 @@ async def async_setup_entry(
     base_url = config.get(CONF_BASE_URL)
     company_id = config.get(CONF_COMPANY_ID)
 
-    session = async_get_clientsession(hass)
+    session = get_api_session(hass, entry)
     entities = []
 
     try:
@@ -156,6 +156,7 @@ async def async_setup_entry(
                     "Enable",
                     True,
                     "mdi:solar-power",
+                    session,
                 )
             )
 
@@ -172,6 +173,7 @@ async def async_setup_entry(
                     "Disable",
                     False,
                     "mdi:solar-power-variant-outline",
+                    session,
                 )
             )
 
@@ -199,8 +201,10 @@ class DeyeSolarSellButton(ButtonEntity):
         action_name,
         is_enable,
         icon,
+        session,
     ):
         self.hass = hass
+        self._session = session
         self._username = username
         self._password = password
         self._app_id = app_id
@@ -226,7 +230,7 @@ class DeyeSolarSellButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        session = async_get_clientsession(self.hass)
+        session = self._session
 
         try:
             token = await async_get_token(
