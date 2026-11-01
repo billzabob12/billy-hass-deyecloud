@@ -168,6 +168,43 @@ class DataIntegrityTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_read_can_observe_uncertain_write_without_clearing_guard(self):
+        api = test_auth.api
+        session = test_auth.auth.DeyeCloudSession(test_auth.Transport(), test_auth.CONFIG)
+        session.pending_orders["sn"] = None
+        with patch.object(api, "_async_post_control", AsyncMock(return_value={"order_result": {}})):
+            await api.async_post_control(
+                session,
+                "token",
+                test_auth.BASE,
+                "/strategy/dynamicControl/read",
+                {"deviceSn": "sn"},
+            )
+        self.assertEqual(session.pending_orders, {"sn": None})
+        with self.assertRaises(api.DeyeCloudOrderError):
+            await api.async_control_grid_charge(session, "token", test_auth.BASE, "sn", True)
+
+    async def test_failed_read_does_not_block_following_write(self):
+        api = test_auth.api
+        session = test_auth.auth.DeyeCloudSession(test_auth.Transport(), test_auth.CONFIG)
+        with patch.object(api, "_async_post_control", AsyncMock(side_effect=TimeoutError)):
+            with self.assertRaises(TimeoutError):
+                await api.async_post_control(
+                    session,
+                    "token",
+                    test_auth.BASE,
+                    "/strategy/dynamicControl/read",
+                    {"deviceSn": "sn"},
+                )
+        self.assertEqual(session.pending_orders, {})
+        with (
+            patch.object(api, "_async_post_control", AsyncMock(return_value={"orderId": 123})),
+            patch.object(
+                api, "async_wait_for_order_result", AsyncMock(return_value={"status": 666})
+            ),
+        ):
+            await api.async_control_grid_charge(session, "token", test_auth.BASE, "sn", False)
+
     async def test_unknown_status_is_not_success(self):
         api = test_auth.api
         for status in (0, 100, 300, 999):

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+- Decode the alternate hybrid register layout used by three-phase inverters.
+- Prefer a completed live register read over the cached battery endpoint.
+- Allow readback while a write is uncertain; failed reads no longer block writes.
+- Retain the uncertainty guard for actual writes; never replay them blindly.
+
 ## 1.1.0
 
 - Merge shared authentication, bounded renewal, official HTTPS endpoint validation,

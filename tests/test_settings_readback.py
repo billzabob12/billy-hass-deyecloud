@@ -29,6 +29,25 @@ values = load("settings_values")
 
 
 class DecodeTests(unittest.TestCase):
+    def test_three_phase_layout_from_live_read(self):
+        registers = {"008E": "1", "0091": "1", "006C": "37", "006D": "0", "0080": "37", "0082": "1"}
+        self.assertEqual(
+            values.decode_settings({}, {"analysisResult": registers}),
+            {
+                "max_battery_charge_current": 37,
+                "max_battery_discharge_current": 0,
+                "grid_charge_current": 37,
+                "grid_charge": True,
+            },
+        )
+        registers["0082"] = "0"
+        registers["0080"] = "0"
+        result = values.decode_settings({}, {"analysisResult": registers})
+        self.assertIs(result["grid_charge"], False)
+        self.assertEqual(result["grid_charge_current"], 0)
+        registers.update({"00F4": "2", "00F8": "1"})
+        self.assertEqual(values.decode_settings({}, {"analysisResult": registers}), {})
+
     def test_documented_battery_fields_and_zero(self):
         self.assertEqual(
             values.decode_settings(
@@ -64,12 +83,12 @@ class DecodeTests(unittest.TestCase):
             {},
         )
 
-    def test_decoded_endpoint_takes_precedence(self):
+    def test_fresh_register_read_takes_precedence_over_cached_endpoint(self):
         result = values.decode_settings(
             {"maxChargeCurrent": 100},
             {"analysisResult": {"00F4": 2, "00F8": 1, "00D2": 190, "00E8": 1}},
         )
-        self.assertEqual(result["max_battery_charge_current"], 100)
+        self.assertEqual(result["max_battery_charge_current"], 190)
         self.assertIs(result["grid_charge"], True)
 
 

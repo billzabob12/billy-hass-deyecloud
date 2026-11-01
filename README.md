@@ -214,6 +214,13 @@ The in-memory uncertainty guard survives integration reloads, but not an HA
 restart. API `success` alone never confirms command execution; unknown order
 statuses remain pending.
 
+Read-only dynamic requests remain available while a write is uncertain and cannot
+set the write uncertainty guard. Completed live register reports take precedence
+over cached battery values. Alternate hybrid layouts are selected only when their
+markers are unambiguous. The alternate mapping follows
+[deye-controller](https://github.com/githubDante/deye-controller/blob/master/deye_controller/modbus/protocol.py)
+and was checked against a live inverter report.
+
 When credentials are rejected, Home Assistant starts reauthentication. Configure
 can change accounts and checks for duplicates; reauthentication keeps the
 existing account identity. History start month must be a past or current month

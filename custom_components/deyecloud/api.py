@@ -349,6 +349,10 @@ async def async_post_control(session, token, base_url, path, payload, **kwargs):
         return await _async_post_control(session, token, base_url, path, payload, **kwargs)
     sn = str(payload["deviceSn"])
     async with session.command_lock(sn):
+        if path == "/strategy/dynamicControl/read":
+            # Reads cannot change inverter settings. Keep write uncertainty intact,
+            # but allow fresh observations and do not poison writes if a read fails.
+            return await _async_post_control(session, token, base_url, path, payload, **kwargs)
         pending = session.pending_orders
         if sn in pending:
             order_id = pending[sn]
